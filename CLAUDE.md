@@ -21,13 +21,21 @@ Infrastructure.
 
 ## Development Environment
 
-Everything runs inside the `paybis-app` container:
+Everything runs inside the `paybis-app` container. The committed
+`docker-compose.yml` is a minimal base; the real per-service config (build args,
+volumes, ports) lives in `docker-compose.override.yml`, which is **gitignored**.
+Before the first start, copy the tracked sample and configure it for your machine:
 
 ```bash
+cp samples/docker-compose.local.yml docker-compose.override.yml   # one-time, then edit if needed
 docker compose up -d --build      # start stack (app + nginx + MySQL); first run installs deps + migrates
 docker exec -it paybis-app sh     # enter the container
 docker compose build              # rebuild after Dockerfile changes
 ```
+
+Compose auto-merges `docker-compose.override.yml` over the base, so no `-f` flags
+are needed. (An `.env` file is likewise required; sample env files live in
+`samples/`.)
 
 The host `./app` directory is mounted at `/app/` in the container. Containers/ports:
 
@@ -244,7 +252,9 @@ Never use floats for prices. The single `scale` is deliberately split into three
 `docker/app/config/supervisor/programs.conf` runs three programs: `php-fpm`,
 `cron` (restarts FATAL programs), and `scheduler-rates`
 (`messenger:consume scheduler_rates` — drives the 5-minute fetch). The container
-healthcheck passes when `php-fpm` and `scheduler-rates` are `RUNNING`.
+healthcheck (in `docker-compose.override.yml`) passes only when **every**
+Supervisor program reports `RUNNING`; if any program drops to a non-RUNNING state
+(`FATAL`, `EXITED`, `STOPPED`, …) the container is marked unhealthy.
 
 ## Coding Conventions
 

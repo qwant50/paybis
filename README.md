@@ -72,10 +72,23 @@ That's it — PHP, Composer, MySQL and all extensions run inside the containers.
 
 ## Installation & startup
 
+The Compose stack is split into a minimal tracked base (`docker-compose.yml`) and
+a local override that holds the build args, volumes and service config. The
+override is **not** committed (it is in `.gitignore`), so copy the provided sample
+and adjust it for your machine before the first start:
+
 ```bash
-# 1. Build images and start the stack (app + nginx + MySQL)
+# 1. Create your local override from the sample, then edit if needed
+cp samples/docker-compose.local.yml docker-compose.override.yml
+
+# 2. Build images and start the stack (app + nginx + MySQL)
 docker compose up -d --build
 ```
+
+Docker Compose automatically merges `docker-compose.override.yml` on top of
+`docker-compose.yml`, so no extra `-f` flags are needed. (An `.env` file is also
+required — see [Configuration](#configuration); sample env files live in
+`samples/`.)
 
 On first start the app container automatically runs `composer install` and applies
 database migrations (to both the app and test databases). Once the containers are
