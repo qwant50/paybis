@@ -1,0 +1,7 @@
+framework:
+    messenger:
+        default_bus: messenger.bus.default
+        buses:
+            messenger.bus.default: ~
+        # The Symfony Scheduler transport that drives the 5-minute rate fetch is
+        # added in Phase 4 once symfony/scheduler is installed.

@@ -1,0 +1,5 @@
+# Rate fetching is driven by Symfony Scheduler (see the messenger-consume
+# supervisor program), so no application cron jobs are required here.
+
+# Restart any supervisor process that fell into a FATAL state.
+*/2  *    *    *    *    supervisorctl status | grep FATAL | awk '{print $1}' | xargs -I {} supervisorctl start {}
