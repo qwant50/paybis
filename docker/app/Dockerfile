@@ -1,0 +1,49 @@
+FROM php:8.5.3-fpm-alpine3.23
+
+# Install system dependencies
+RUN apk add --no-cache \
+    dcron \
+    supervisor \
+    libzip-dev
+
+ADD --chmod=0755 https://github.com/mlocati/docker-php-extension-installer/releases/latest/download/install-php-extensions /usr/local/bin/
+
+# Install PHP extensions
+RUN install-php-extensions \
+    pdo_mysql \
+    zip \
+    sockets \
+    # pcntl is used to listen supervisor signals and manage running processes
+    pcntl \
+    # required by Symfony for best performance
+    intl
+
+# Install Composer using official recommended method
+COPY --from=composer:2.9.5 /usr/bin/composer /usr/local/bin/composer
+
+# Set environment variables for Composer
+ENV COMPOSER_ALLOW_SUPERUSER=1 \
+    COMPOSER_HOME=/tmp/composer
+
+# setup php
+COPY ./docker/app/config/php/php.ini /usr/local/etc/php/conf.d/99-custom.ini
+
+# setup supervisor
+RUN mkdir -p /etc/supervisor/conf.d
+COPY ./docker/app/config/supervisor/supervisord.conf /etc/supervisor/supervisord.conf
+COPY ./docker/app/config/supervisor/programs.conf /etc/supervisor/conf.d/
+
+# setup cron
+COPY ./docker/app/config/cron/crontab /tmp/crontab
+RUN crontab /tmp/crontab && rm /tmp/crontab
+
+# setup scripts
+COPY ./docker/app/init.sh /
+
+WORKDIR /app/
+
+COPY ./app/ ./
+
+ENTRYPOINT ["/init.sh"]
+
+CMD ["/usr/bin/supervisord"]

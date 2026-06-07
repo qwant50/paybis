@@ -1,0 +1,3 @@
+services:
+  session.storage.mock_file:
+    class: Symfony\Component\HttpFoundation\Session\Storage\MockFileSessionStorage

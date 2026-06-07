@@ -1,0 +1,27 @@
+namespace: Tests
+support_namespace: Support
+paths:
+  tests: tests
+  output: tests/_output
+  data: tests/Support/Data
+  support: tests/Support
+  envs: tests/_envs
+actor_suffix: Tester
+extensions:
+  enabled:
+    - Codeception\Extension\RunFailed
+params:
+  - .env
+  - .env.local
+  - .env.test
+settings:
+  colors: true
+  debug: true
+  memory_limit: 1024M
+coverage:
+  enabled: true
+  include:
+    - src/*
+  exclude:
+    - src/Kernel.php
+    - src/Infrastructure/Doctrine/Migrations/*
