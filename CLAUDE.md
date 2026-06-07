@@ -28,14 +28,26 @@ Before the first start, copy the tracked sample and configure it for your machin
 
 ```bash
 cp samples/docker-compose.local.yml docker-compose.override.yml   # one-time, then edit if needed
+cp samples/.env.local .env                                        # one-time, then edit (secrets, credentials)
 docker compose up -d --build      # start stack (app + nginx + MySQL); first run installs deps + migrates
 docker exec -it paybis-app sh     # enter the container
 docker compose build              # rebuild after Dockerfile changes
 ```
 
 Compose auto-merges `docker-compose.override.yml` over the base, so no `-f` flags
-are needed. (An `.env` file is likewise required; sample env files live in
-`samples/`.)
+are needed. Both `docker-compose.override.yml` and the root `.env` are **gitignored**;
+tracked samples live in `samples/`.
+
+**Configuration is environment-only — there are no `.env` files inside `app/`.** The
+root `.env` is the single per-machine config source; `docker-compose.override.yml`
+injects it into the containers as real environment variables (`env_file: .env`), and
+the app reads everything from the environment. So that PHP-FPM workers see those
+variables, the FPM pool sets `clear_env = no` (`docker/app/config/php/www.conf`, copied
+to `/usr/local/etc/php-fpm.d/`), and `symfony/runtime`'s own dotenv loading is turned
+off (`extra.runtime.disable_dotenv` in `app/composer.json`). The only variables the
+app consumes are `APP_ENV`, `APP_SECRET`, `APP_DB`, `APP_DB_HOST`, `APP_DB_PORT`,
+`APP_DB_USER`, `APP_DB_PASSWORD`, `BINANCE_API_KEY`, `BINANCE_API_SECRET`,
+`API_SIGNING_SECRET`, `API_SIGNING_KEY_ID` (`APP_DEBUG` is derived from `APP_ENV`).
 
 The host `./app` directory is mounted at `/app/` in the container. Containers/ports:
 
@@ -86,6 +98,14 @@ Codeception 5 (wraps PHPUnit 11). Suites: `Unit`, `Integration` (actors
 `UnitTester`, `IntegrationTester`). Integration tests use the `app_test` database
 (auto-created) with the `Symfony` + `Doctrine` modules; each test runs in a
 transaction that is rolled back. PSR-12; PHPStan level 9 (`app/phpstan.neon`).
+
+With no `.env` files, the test-only config lives in two committed places: the test
+database name is derived as `%env(resolve:APP_DB)%_test` in
+`config/packages/test/doctrine.yaml` (so both the suite and `--env=test` migrations
+hit `app_test`, inheriting host/user/password from the environment), and the
+deterministic non-secret signing values (`API_SIGNING_SECRET`, `API_SIGNING_KEY_ID`)
+plus `APP_ENV=test` are set in `tests/bootstrap.php` (wired via `codeception.yml`'s
+`settings.bootstrap`).
 
 ## Architecture
 

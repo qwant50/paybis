@@ -4,11 +4,6 @@ if [ ! -d /var/log/supervisor ]; then
   mkdir /var/log/supervisor && chmod 777 /var/log/supervisor
 fi
 
-if [ -z "$APP_ENV" ]; then
-  source .env
-  source .env.local
-fi
-
 echo 'Clear all caches everywhere.'
 bin/console cache:pool:clear cache.global_clearer
 

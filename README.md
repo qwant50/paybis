@@ -81,14 +81,18 @@ and adjust it for your machine before the first start:
 # 1. Create your local override from the sample, then edit if needed
 cp samples/docker-compose.local.yml docker-compose.override.yml
 
-# 2. Build images and start the stack (app + nginx + MySQL)
+# 2. Create your local .env from the sample, then edit (secrets, credentials)
+cp samples/.env.local .env
+
+# 3. Build images and start the stack (app + nginx + MySQL)
 docker compose up -d --build
 ```
 
 Docker Compose automatically merges `docker-compose.override.yml` on top of
-`docker-compose.yml`, so no extra `-f` flags are needed. (An `.env` file is also
-required — see [Configuration](#configuration); sample env files live in
-`samples/`.)
+`docker-compose.yml`, so no extra `-f` flags are needed. Both the override and the
+root `.env` are **gitignored**; tracked samples live in `samples/`. The override
+injects the root `.env` into the containers as real environment variables
+(`env_file: .env`) — see [Configuration](#configuration).
 
 On first start the app container automatically runs `composer install` and applies
 database migrations (to both the app and test databases). Once the containers are
@@ -110,10 +114,15 @@ The 5-minute fetch starts automatically: Supervisor runs the
 
 ### Configuration
 
-Environment variables (see `.env` / `app/.env`):
+The app reads its entire configuration from the **environment** — there are no
+`.env` files inside `app/`. The root `.env` (gitignored, copied from
+`samples/.env.local`) is the single per-machine source; Compose injects it into the
+containers as real environment variables. Variables consumed:
 
 | Variable                         | Purpose                                   | Default |
 |----------------------------------|-------------------------------------------|---------|
+| `APP_ENV`                        | Symfony environment (`dev` / `prod`)      | `dev`   |
+| `APP_SECRET`                     | Framework secret (CSRF, signed URIs)      | dev placeholder |
 | `APP_DB`, `APP_DB_USER`, …       | MySQL connection                          | `app`   |
 | `APP_DB_HOST` / `APP_DB_PORT`    | DB host / port (inside the network)       | `db` / `3306` |
 | `BINANCE_API_KEY` / `_SECRET`    | Optional — **not needed** for public ticker | empty |
@@ -121,6 +130,10 @@ Environment variables (see `.env` / `app/.env`):
 | `API_SIGNING_KEY_ID`             | Signing key identifier (supports rotation) | `v1`   |
 
 > The ticker-price endpoint is public, so no Binance credentials are required.
+>
+> Tests need no `.env`: the `app_test` database name is derived in
+> `config/packages/test/doctrine.yaml`, and deterministic test-only values live in
+> `tests/bootstrap.php`.
 
 ## API
 

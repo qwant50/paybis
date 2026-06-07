@@ -27,6 +27,8 @@ ENV COMPOSER_ALLOW_SUPERUSER=1 \
 
 # setup php
 COPY ./docker/app/config/php/php.ini /usr/local/etc/php/conf.d/99-custom.ini
+# PHP-FPM pool config: pass the container environment through to workers.
+COPY ./docker/app/config/php/www.conf /usr/local/etc/php-fpm.d/zz-clear-env.conf
 
 # setup supervisor
 RUN mkdir -p /etc/supervisor/conf.d

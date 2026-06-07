@@ -7,8 +7,8 @@ services:
         - USER_ID=${UID:-1000}
         - GROUP_ID=${GID:-1000}
       dockerfile: ./docker/app/Dockerfile.local
-    environment:
-      - APP_TEST_DB=app_test
+    env_file:
+      - .env
     healthcheck:
       # Healthy when both critical Supervisor programs (PHP-FPM and the
       # rate-fetch scheduler worker) report RUNNING.
@@ -19,7 +19,6 @@ services:
       start_period: 40s
     volumes:
       - ./app/:/app/
-      - .env:/app/.env.local
       - /var/run/docker.sock:/var/run/docker.sock
       - ./logs:/var/log/
     depends_on:
@@ -47,7 +46,6 @@ services:
     env_file:
       - .env
     environment:
-      - APP_TEST_DB=app_test
       # Root + application credentials are created on first container run.
       - MYSQL_ROOT_PASSWORD=admin
       - MYSQL_DATABASE=${APP_DB:-app}

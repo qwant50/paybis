@@ -4,11 +4,6 @@ if [ ! -d /var/log/supervisor ]; then
   mkdir /var/log/supervisor && chmod 777 /var/log/supervisor
 fi
 
-if [ -z "$APP_ENV" ]; then
-  source .env
-  source .env.local
-fi
-
 # composer install in init.sh, not in Dockerfile.local, because:
 # - ./app folder from host is mounted to /app in container
 # - all existing content in /app in container is rewritten by content of ./app host folder

@@ -10,11 +10,11 @@ actor_suffix: Tester
 extensions:
   enabled:
     - Codeception\Extension\RunFailed
-params:
-  - .env
-  - .env.local
-  - .env.test
 settings:
+  # Per-suite bootstrap, resolved relative to each suite dir — `../bootstrap.php`
+  # points both suites at tests/bootstrap.php (no .env files; configuration comes
+  # from the real environment, with deterministic test-only overrides set there).
+  bootstrap: ../bootstrap.php
   colors: true
   debug: true
   memory_limit: 1024M

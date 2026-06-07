@@ -1,0 +1,7 @@
+doctrine:
+    dbal:
+        # The test suite and `--env=test` migrations run against a dedicated
+        # schema, derived from the configured database name (e.g. `app` -> `app_test`).
+        # docker/db/init.sh provisions `${APP_DB}_test`; host/port/user/password are
+        # inherited from the real environment (same `db` service as dev).
+        dbname: "%env(resolve:APP_DB)%_test"
