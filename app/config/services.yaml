@@ -1,0 +1,74 @@
+# This file is the entry point to configure your own services.
+# Files in the packages/ subdirectory configure your dependencies.
+
+# Put parameters here that don't need to change on each machine where the app is deployed
+# https://symfony.com/doc/current/best_practices/configuration.html#application-related-configuration
+
+parameters:
+    # Where the credentials ultimately come from is up to you
+    binance.api_key:    '%env(BINANCE_API_KEY)%'
+    binance.api_secret: '%env(BINANCE_API_SECRET)%'
+    binance.base_url: 'https://api.binance.com/api'
+
+    # Deployed application release, reported in every API response envelope's
+    # `version.release` and as the OpenAPI `info.version` (single source).
+    app.release: '1.0.0'
+
+services:
+    # default configuration for services in *this* file
+    _defaults:
+        autowire: true      # Automatically injects dependencies in your services.
+        autoconfigure: true # Automatically registers your services as commands, event subscribers, etc.
+
+    # makes classes in src/ available to be used as services
+    # this creates a service per class whose id is the fully-qualified class name
+    App\:
+      resource: '../src/*'
+      exclude:
+        - '../src/Infrastructure/Doctrine/Entity/'
+        - '../src/Infrastructure/Doctrine/Migrations/'
+        # API response DTOs are plain value objects, not services.
+        - '../src/Infrastructure/Controller/**/Response/'
+        - '../src/Kernel.php'
+
+    # controllers are tagged so route arguments are autowired
+    App\Infrastructure\Controller\:
+        resource: '../src/Infrastructure/Controller/'
+        exclude:
+            - '../src/Infrastructure/Controller/**/Response/'
+        tags: ['controller.service_arguments']
+
+    # Monolog
+
+    monolog.formatter.pid_line_formatter:
+        class: Monolog\Formatter\LineFormatter
+        arguments:
+            $format: "[%%datetime%%] (PID: %%extra.process_id%%) (req: %%extra.request_id%%) %%channel%%.%%level_name%%: %%message%% %%context%% %%extra%%\n"
+
+    monolog.processor.process_id:
+        class: Monolog\Processor\ProcessIdProcessor
+        tags:
+            - { name: monolog.processor }
+
+    monolog.formatter.console_line_formatter:
+        class: Monolog\Formatter\LineFormatter
+        arguments:
+            $format: "%%datetime%% %%level_name%% %%message%% %%context%%\n"
+            $dateFormat: "H:i:s"
+            $ignoreEmptyContextAndExtra: true
+
+    Psr\Container\ContainerInterface: '@service_container'
+
+    # Binance spot REST client wrapper. Public market-data endpoints need no
+    # credentials, so empty key/secret are fine.
+    App\Infrastructure\Binance\BinanceService:
+        arguments:
+            $apiKey: '%binance.api_key%'
+            $secretKey: '%binance.api_secret%'
+            $testnet: false
+
+    App\Application\Service\TickerPriceProvider: '@App\Infrastructure\Binance\BinanceService'
+
+    # Rate persistence port -> Doctrine adapter.
+    App\Domain\ExchangeRate\RateRepository: '@App\Infrastructure\Doctrine\Repository\ExchangeRateRepository'
+

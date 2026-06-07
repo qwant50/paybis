@@ -1,0 +1,39 @@
+monolog:
+  handlers:
+    app:
+      type: rotating_file
+      path: "%kernel.logs_dir%/app.log"
+      file_permission: '0777'
+      max_files: 7
+      level: debug
+      channels: ["app"]
+      buffer_size: 50 # How many messages should be saved? Prevent memory leaks
+      formatter: monolog.formatter.pid_line_formatter
+
+    all:
+      type: rotating_file
+      path: "%kernel.logs_dir%/all.log"
+      file_permission: '0777'
+      max_files: 7
+      level: debug
+      buffer_size: 50 # How many messages should be saved? Prevent memory leaks
+      formatter: monolog.formatter.pid_line_formatter
+      channels: [ "!doctrine" ]     # <─ exclude SQL logs
+
+    error:
+      type: rotating_file
+      path: "%kernel.logs_dir%/error.log"
+      file_permission: '0777'
+      max_files: 7
+      level: error
+      buffer_size: 50 # How many messages should be saved? Prevent memory leaks
+      formatter: monolog.formatter.pid_line_formatter
+
+    console:
+      type: console
+      process_psr_3_messages: true
+      channels: ["!event", "!doctrine"]
+      verbosity_levels:
+        VERBOSITY_NORMAL: INFO
+        VERBOSITY_VERBOSE: DEBUG
+      formatter: monolog.formatter.console_line_formatter

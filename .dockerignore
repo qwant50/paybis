@@ -1,0 +1,8 @@
+**/.git
+**/.idea
+**/var
+**/vendor
+**/node_modules
+logs
+docker/db/backup
+*.phar

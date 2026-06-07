@@ -1,0 +1,9 @@
+nelmio_api_doc:
+    documentation:
+        info:
+            title: Crypto Exchange Rates API
+            description: 'EUR→crypto (BTC, ETH, LTC) exchange rates sourced from Binance, sampled every 5 minutes.'
+            version: '%app.release%'
+    areas:
+        path_patterns:
+            - ^/api/v
