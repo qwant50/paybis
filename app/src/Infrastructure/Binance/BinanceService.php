@@ -8,9 +8,7 @@ use App\Application\Service\ClosedCandle;
 use App\Application\Service\ClosedCandleProvider;
 use Binance\Client\Spot\Api\SpotRestApi;
 use Binance\Client\Spot\Model\Interval;
-use Binance\Client\Spot\SpotRestApiUtil;
 use Binance\Common\ApiException;
-use Psr\Log\LoggerInterface;
 
 /**
  * Thin wrapper over the Binance spot REST client, exposing only the single piece
@@ -21,47 +19,40 @@ use Psr\Log\LoggerInterface;
  * without flooring the local clock. The {@see self::INTERVAL} here must match the
  * scheduler cadence in {@see \App\Infrastructure\Scheduler\RatesSchedule}.
  */
-final class BinanceService implements ClosedCandleProvider
+final readonly class BinanceService implements ClosedCandleProvider
 {
     private const Interval INTERVAL = Interval::INTERVAL_5M;
 
-    private SpotRestApi $spotRestApi;
+    /**
+     * How many of the most recent candles to fetch. Binance always returns the
+     * still-forming candle as the last element, so at least 2 are needed to see a
+     * closed one. We ask for 3: the extra candle is a buffer so a fetch landing
+     * exactly on a 5-minute boundary (where the freshest just-closed candle's
+     * close time can momentarily read as not-yet-passed under clock skew) still
+     * finds an unambiguously closed candle instead of throwing.
+     */
+    private const int CANDLE_FETCH_LIMIT = 3;
 
     public function __construct(
-        string $apiKey,
-        string $secretKey,
-        bool $testnet = false,
-        private readonly ?LoggerInterface $logger = null,
+        private SpotRestApi $spotRestApi,
     ) {
-        try {
-            $builder = SpotRestApiUtil::getConfigurationBuilder();
-            $builder->apiKey($apiKey)->secretKey($secretKey);
-
-            if ($testnet) {
-                $builder->url('https://testnet.binance.vision');
-            }
-
-            $this->spotRestApi = new SpotRestApi($builder->build());
-        } catch (\Throwable $e) {
-            $this->logger?->error('Failed to initialise Binance API client.', ['exception' => $e]);
-
-            throw new \RuntimeException('Failed to initialise Binance API client: ' . $e->getMessage(), 0, $e);
-        }
     }
 
     /**
      * The latest closed 5-minute candle for a Binance symbol (e.g. "BTCEUR").
      *
-     * Requests the two most recent candles — the last element is the still-forming
-     * candle, so the closed one is whichever candle has already passed its close
-     * time. Prices and timestamps are kept as strings/ints to preserve precision.
+     * Binance returns the candles in ascending order with the last element being
+     * the still-forming (not yet closed) candle, whose price keeps changing — so
+     * it is deliberately filtered out: we keep the most recent candle whose close
+     * time has already passed. Prices and timestamps are kept as strings/ints to
+     * preserve precision.
      *
      * @throws \RuntimeException when the request fails or no closed candle is available
      */
     public function latestClosedCandle(string $symbol): ClosedCandle
     {
         try {
-            $response = $this->spotRestApi->klines($symbol, self::INTERVAL, limit: 2);
+            $response = $this->spotRestApi->klines($symbol, self::INTERVAL, limit: self::CANDLE_FETCH_LIMIT);
         } catch (ApiException $e) {
             throw new \RuntimeException(
                 sprintf('Binance klines request for "%s" failed: %s', $symbol, $e->getMessage()),
@@ -94,7 +85,7 @@ final class BinanceService implements ClosedCandleProvider
 
         // The `@` epoch format is always UTC; a 5-minute open time is whole-second
         // and on the grid, so seconds land on :00.
-        $openTime = (new \DateTimeImmutable('@' . intdiv((int) $closed[0], 1000)))
+        $openTime = new \DateTimeImmutable('@' . intdiv((int) $closed[0], 1000))
             ->setTimezone(new \DateTimeZone('UTC'));
 
         return new ClosedCandle($closePrice, $openTime);
