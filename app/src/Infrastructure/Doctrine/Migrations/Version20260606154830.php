@@ -14,7 +14,7 @@ final class Version20260606154830 extends AbstractMigration
 {
     public function getDescription(): string
     {
-        return 'Create exchange_rate table with index on (pair, recorded_at).';
+        return 'Create exchange_rate table with a UNIQUE (pair, recorded_at) constraint.';
     }
 
     public function up(Schema $schema): void
@@ -23,10 +23,10 @@ final class Version20260606154830 extends AbstractMigration
             CREATE TABLE exchange_rate (
               id INT AUTO_INCREMENT NOT NULL,
               pair VARCHAR(16) NOT NULL,
-              price NUMERIC(20, 8) NOT NULL,
-              recorded_at DATETIME NOT NULL COMMENT '(DC2Type:datetime_immutable)',
-              created_at DATETIME NOT NULL COMMENT '(DC2Type:datetime_immutable)',
-              INDEX idx_exchange_rate_pair_recorded_at (pair, recorded_at),
+              price NUMERIC(30, 12) NOT NULL,
+              recorded_at DATETIME NOT NULL,
+              created_at DATETIME(6) NOT NULL,
+              UNIQUE INDEX uq_exchange_rate_pair_recorded_at (pair, recorded_at),
               PRIMARY KEY(id)
             ) DEFAULT CHARACTER SET utf8mb4 COLLATE `utf8mb4_unicode_ci` ENGINE = InnoDB
         SQL);

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Infrastructure\Doctrine\Entity;
 
 use App\Infrastructure\Doctrine\Repository\ExchangeRateRepository;
+use App\Infrastructure\Doctrine\Type\DateTimeImmutableMicrosecondType;
 use Doctrine\DBAL\Types\Types;
 use Doctrine\ORM\Mapping as ORM;
 
@@ -19,7 +20,7 @@ use Doctrine\ORM\Mapping as ORM;
  */
 #[ORM\Entity(repositoryClass: ExchangeRateRepository::class)]
 #[ORM\Table(name: 'exchange_rate')]
-#[ORM\Index(name: 'idx_exchange_rate_pair_recorded_at', columns: ['pair', 'recorded_at'])]
+#[ORM\UniqueConstraint(name: 'uq_exchange_rate_pair_recorded_at', columns: ['pair', 'recorded_at'])]
 #[ORM\HasLifecycleCallbacks]
 class ExchangeRateDoctrine
 {
@@ -37,7 +38,7 @@ class ExchangeRateDoctrine
     #[ORM\Column(name: 'recorded_at', type: Types::DATETIME_IMMUTABLE)]
     private \DateTimeImmutable $recordedAt;
 
-    #[ORM\Column(name: 'created_at', type: Types::DATETIME_IMMUTABLE)]
+    #[ORM\Column(name: 'created_at', type: DateTimeImmutableMicrosecondType::NAME)]
     private \DateTimeImmutable $createdAt;
 
     public function __construct(string $pair, string $price, \DateTimeImmutable $recordedAt)
