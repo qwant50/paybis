@@ -8,12 +8,12 @@ use App\Infrastructure\Controller\Api\Response\ApiEnvelope;
 use App\Infrastructure\Controller\Api\Response\ApiError;
 use App\Infrastructure\Controller\Api\Response\ApiVersion;
 use App\Infrastructure\Controller\Api\Security\ResponseSigner;
+use App\Infrastructure\Logging\CorrelationContext;
 use Psr\Clock\ClockInterface;
 use Symfony\Component\DependencyInjection\Attribute\Autowire;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\RequestStack;
 use Symfony\Component\HttpFoundation\Response;
-use Symfony\Component\Uid\Ulid;
 
 /**
  * Shared JSON responder for every API response (all versions, all resources).
@@ -45,12 +45,6 @@ final readonly class ApiResponder
         | JSON_UNESCAPED_UNICODE;
 
     /**
-     * Request attribute set by {@see \App\Infrastructure\EventListener\RequestIdListener}
-     * holding the correlation id for the current request.
-     */
-    public const string REQUEST_ID_ATTRIBUTE = '_request_id';
-
-    /**
      * Response header carrying the correlation id back to the client, mirroring
      * the envelope's {@code id} for log/trace correlation.
      */
@@ -58,6 +52,7 @@ final readonly class ApiResponder
 
     public function __construct(
         private RequestStack $requestStack,
+        private CorrelationContext $correlation,
         private ClockInterface $clock,
         private ResponseSigner $signer,
         #[Autowire('%app.release%')]
@@ -101,12 +96,10 @@ final readonly class ApiResponder
 
     private function requestId(): string
     {
-        $request = $this->requestStack->getCurrentRequest();
-        $id = $request?->attributes->get(self::REQUEST_ID_ATTRIBUTE);
-
-        // Normally set early by RequestIdListener; fall back so a response is
-        // never left without a correlation id (e.g. in isolated unit tests).
-        return is_string($id) && $id !== '' ? $id : (string) new Ulid();
+        // Normally set early by RequestIdListener; getOrGenerate falls back to a
+        // fresh ULID so a response is never left without a correlation id (e.g. in
+        // isolated unit tests).
+        return $this->correlation->getOrGenerate();
     }
 
     private function version(): ApiVersion

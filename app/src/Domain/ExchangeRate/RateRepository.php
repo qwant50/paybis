@@ -29,4 +29,10 @@ interface RateRepository
      * @return list<ExchangeRate>
      */
     public function findBetween(CurrencyPair $pair, \DateTimeImmutable $from, \DateTimeImmutable $to): array;
+
+    /**
+     * The recorded-at time of the most recent sample across all pairs, or null if
+     * no samples are stored yet. Used to gauge how fresh the stored feed is.
+     */
+    public function latestRecordedAt(): ?\DateTimeImmutable;
 }

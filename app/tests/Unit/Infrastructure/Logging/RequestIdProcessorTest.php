@@ -4,32 +4,27 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Infrastructure\Logging;
 
-use App\Infrastructure\Controller\Api\ApiResponder;
+use App\Infrastructure\Logging\CorrelationContext;
 use App\Infrastructure\Logging\RequestIdProcessor;
 use Codeception\Test\Unit;
 use Monolog\Level;
 use Monolog\LogRecord;
-use Symfony\Component\HttpFoundation\Request;
-use Symfony\Component\HttpFoundation\RequestStack;
 
 final class RequestIdProcessorTest extends Unit
 {
-    public function testItTagsTheRecordWithTheCurrentRequestId(): void
+    public function testItTagsTheRecordWithTheCurrentCorrelationId(): void
     {
-        $request = Request::create('/api/v1/rates/last-24h');
-        $request->attributes->set(ApiResponder::REQUEST_ID_ATTRIBUTE, '01REQUESTID');
+        $context = new CorrelationContext();
+        $context->set('01REQUESTID');
 
-        $stack = new RequestStack();
-        $stack->push($request);
-
-        $record = (new RequestIdProcessor($stack))($this->record());
+        $record = (new RequestIdProcessor($context))($this->record());
 
         $this->assertSame('01REQUESTID', $record->extra['request_id']);
     }
 
-    public function testItLeavesTheRecordUntouchedWithoutARequest(): void
+    public function testItLeavesTheRecordUntouchedWithoutACorrelationId(): void
     {
-        $record = (new RequestIdProcessor(new RequestStack()))($this->record());
+        $record = (new RequestIdProcessor(new CorrelationContext()))($this->record());
 
         $this->assertArrayNotHasKey('request_id', $record->extra);
     }

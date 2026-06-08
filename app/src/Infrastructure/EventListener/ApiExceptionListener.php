@@ -100,9 +100,10 @@ final readonly class ApiExceptionListener
     private function codeForStatus(int $status): string
     {
         return match ($status) {
-            Response::HTTP_NOT_FOUND          => 'NOT_FOUND',
-            Response::HTTP_METHOD_NOT_ALLOWED => 'METHOD_NOT_ALLOWED',
-            default                           => 'HTTP_ERROR',
+            Response::HTTP_NOT_FOUND            => 'NOT_FOUND',
+            Response::HTTP_METHOD_NOT_ALLOWED   => 'METHOD_NOT_ALLOWED',
+            Response::HTTP_SERVICE_UNAVAILABLE  => 'SERVICE_UNAVAILABLE',
+            default                             => 'HTTP_ERROR',
         };
     }
 }

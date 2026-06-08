@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Infrastructure\Binance;
 
 use App\Application\Service\PriceHistoryProvider;
+use App\Application\Service\PricePoint;
 use Psr\Log\LoggerInterface;
 
 /**
@@ -35,7 +36,7 @@ final readonly class RetryingPriceHistoryProvider implements PriceHistoryProvide
     }
 
     /**
-     * @return list<\App\Application\Service\PricePoint>
+     * @return list<PricePoint>
      *
      * @throws \RuntimeException when every attempt fails (the last failure is rethrown)
      */
@@ -55,11 +56,11 @@ final readonly class RetryingPriceHistoryProvider implements PriceHistoryProvide
 
                 $delayMs = $this->baseDelayMs * (2 ** ($attempt - 1));
                 $this->logger->warning('Binance price fetch failed; retrying.', [
-                    'symbol' => $symbol,
-                    'attempt' => $attempt,
+                    'symbol'       => $symbol,
+                    'attempt'      => $attempt,
                     'max_attempts' => $this->maxAttempts,
-                    'delay_ms' => $delayMs,
-                    'exception' => $e,
+                    'delay_ms'     => $delayMs,
+                    'exception'    => $e,
                 ]);
 
                 if ($delayMs > 0) {

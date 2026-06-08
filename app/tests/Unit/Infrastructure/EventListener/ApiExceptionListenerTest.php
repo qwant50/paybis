@@ -9,6 +9,7 @@ use App\Domain\ExchangeRate\Exception\InvalidPairException;
 use App\Infrastructure\Controller\Api\ApiResponder;
 use App\Infrastructure\Controller\Api\Security\ResponseSigner;
 use App\Infrastructure\EventListener\ApiExceptionListener;
+use App\Infrastructure\Logging\CorrelationContext;
 use Codeception\Test\Unit;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\Clock\MockClock;
@@ -112,6 +113,7 @@ final class ApiExceptionListenerTest extends Unit
 
         $responder = new ApiResponder(
             $requestStack,
+            new CorrelationContext(),
             new MockClock('2026-06-07T12:34:56+00:00'),
             new ResponseSigner('test_signing_secret', 'test'),
             '1.0.0',

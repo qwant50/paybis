@@ -9,6 +9,7 @@ use App\Infrastructure\Controller\Api\Response\ApiError;
 use App\Infrastructure\Controller\Api\Security\ResponseSigner;
 use App\Infrastructure\Controller\Api\V1\Rate\Response\RatePoint;
 use App\Infrastructure\Controller\Api\V1\Rate\Response\RateSeriesResponse;
+use App\Infrastructure\Logging\CorrelationContext;
 use Codeception\Test\Unit;
 use Symfony\Component\Clock\MockClock;
 use Symfony\Component\HttpFoundation\Request;
@@ -74,16 +75,17 @@ final class ApiResponderTest extends Unit
 
     private function responder(string $path, ?string $requestId): ApiResponder
     {
-        $request = Request::create($path);
-        if ($requestId !== null) {
-            $request->attributes->set(ApiResponder::REQUEST_ID_ATTRIBUTE, $requestId);
-        }
-
         $stack = new RequestStack();
-        $stack->push($request);
+        $stack->push(Request::create($path));
+
+        $context = new CorrelationContext();
+        if ($requestId !== null) {
+            $context->set($requestId);
+        }
 
         return new ApiResponder(
             $stack,
+            $context,
             new MockClock('2026-06-07T12:34:56+00:00'),
             new ResponseSigner(self::SECRET, 'test'),
             '1.0.0',
