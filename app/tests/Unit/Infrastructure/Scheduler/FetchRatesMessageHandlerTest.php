@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Infrastructure\Scheduler;
 
+use App\Application\Service\Metrics;
 use App\Application\Service\PriceHistoryProvider;
 use App\Application\Service\RateFetcher;
 use App\Domain\ExchangeRate\RateRepository;
@@ -39,6 +40,7 @@ final class FetchRatesMessageHandlerTest extends Unit
             $provider,
             $this->createMock(RateRepository::class),
             $this->createMock(LoggerInterface::class),
+            $this->createMock(Metrics::class),
         );
     }
 }

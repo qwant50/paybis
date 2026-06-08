@@ -26,20 +26,25 @@ final readonly class RateFetcher
         private PriceHistoryProvider $binance,
         private RateRepository $repository,
         private LoggerInterface $logger,
+        private Metrics $metrics,
     ) {
     }
 
     public function fetchAll(): RateFetchReport
     {
+        $runStart = microtime(true);
         $stored = 0;
         $skipped = 0;
         $failed = 0;
 
         foreach (CurrencyPair::all() as $pair) {
+            $fetchStart = microtime(true);
             try {
                 $points = $this->binance->recentPricePoints($pair->binanceSymbol());
             } catch (\Throwable $e) {
                 ++$failed;
+                $this->metrics->timing('binance.fetch.duration_ms', self::elapsedMs($fetchStart), ['pair' => $pair->value()]);
+                $this->metrics->increment('binance.fetch', tags: ['pair' => $pair->value(), 'outcome' => 'failure']);
                 $this->logger->error('Failed to fetch exchange rates.', [
                     'pair'      => $pair->value(),
                     'exception' => $e,
@@ -47,6 +52,9 @@ final readonly class RateFetcher
 
                 continue;
             }
+
+            $this->metrics->timing('binance.fetch.duration_ms', self::elapsedMs($fetchStart), ['pair' => $pair->value()]);
+            $this->metrics->increment('binance.fetch', tags: ['pair' => $pair->value(), 'outcome' => 'success']);
 
             foreach ($points as $point) {
                 try {
@@ -75,6 +83,12 @@ final readonly class RateFetcher
         }
 
         $report = new RateFetchReport($stored, $skipped, $failed);
+
+        $this->metrics->timing('rate_fetch.duration_ms', self::elapsedMs($runStart));
+        $this->metrics->increment('rate_fetch.stored', $report->stored);
+        $this->metrics->increment('rate_fetch.skipped', $report->skipped);
+        $this->metrics->increment('rate_fetch.failed', $report->failed);
+
         $this->logger->info('Rate fetch run complete.', [
             'stored'  => $report->stored,
             'skipped' => $report->skipped,
@@ -82,5 +96,10 @@ final readonly class RateFetcher
         ]);
 
         return $report;
+    }
+
+    private static function elapsedMs(float $start): float
+    {
+        return (microtime(true) - $start) * 1000;
     }
 }

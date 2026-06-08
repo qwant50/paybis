@@ -86,3 +86,10 @@ services:
     # Rate persistence port -> Doctrine adapter.
     App\Domain\ExchangeRate\RateRepository: '@App\Infrastructure\Doctrine\Repository\ExchangeRateRepository'
 
+    # Metrics port -> log-based adapter on the dedicated 'metrics' channel.
+    App\Infrastructure\Observability\LoggingMetrics:
+        arguments:
+            $logger: '@monolog.logger.metrics'
+
+    App\Application\Service\Metrics: '@App\Infrastructure\Observability\LoggingMetrics'
+
