@@ -5,7 +5,8 @@ EUR→ETH and EUR→LTC** exchange rates from the [Binance Spot API][binance] an
 exposes them as JSON for charting.
 
 - **Periodic ingestion** — every 5 minutes via **Symfony Scheduler** (a Messenger
-  worker), one rate sample per pair.
+  worker), one rate sample per pair, taken from the last *closed* 5-minute Binance
+  candle so each sample sits exactly on the `:00/:05/:10…` UTC grid.
 - **Two read endpoints** — last 24 hours, and a specific day.
 - **OpenAPI docs** — interactive Swagger UI at `/api/doc`.
 
@@ -32,11 +33,17 @@ two representations can never drift apart. The stored price is that EUR-quoted
 value, kept as a fixed-scale `DECIMAL(30,12)` and manipulated through a
 `brick/money`-backed `Rate` value object so no precision is lost.
 
+Each fetch reads the **last closed 5-minute candle** (`klines`, `interval=5m`) and
+stores its close price stamped with the candle's `openTime`. That time is
+authoritative and already on the 5-minute UTC grid, so chart points are evenly
+spaced; re-storing an already-recorded slot is an idempotent no-op (a closed
+candle is immutable history).
+
 ```
 Scheduler (every 5 min) ─▶ FetchRatesMessage ─▶ RateFetcher
                                                    │  for each supported pair
                                                    ▼
-                              BinanceService.getTickerPrice("BTCEUR")
+                           BinanceService.latestClosedCandle("BTCEUR")
                                                    ▼
                                        exchange_rate table (MySQL)
                                                    ▲
@@ -50,10 +57,10 @@ GET /api/v1/rates/day
 app/src/
 ├── Domain/ExchangeRate/         # CurrencyPair, Rate, Day, ExchangeRate, RateRepository (pure, no framework)
 ├── Application/
-│   ├── Service/                 # RateFetcher, TickerPriceProvider (port), RateFetchReport
+│   ├── Service/                 # RateFetcher, ClosedCandleProvider (port), ClosedCandle, RateFetchReport
 │   └── Query/                   # RateQueryService (read side)
 └── Infrastructure/
-    ├── Binance/                 # BinanceService (TickerPriceProvider adapter)
+    ├── Binance/                 # BinanceService (ClosedCandleProvider adapter)
     ├── Scheduler/               # FetchRatesMessage(+Handler), RatesSchedule (every 5 min)
     ├── Console/                 # app:rates:fetch
     ├── Controller/
@@ -125,11 +132,11 @@ containers as real environment variables. Variables consumed:
 | `APP_SECRET`                     | Framework secret (CSRF, signed URIs)      | dev placeholder |
 | `APP_DB`, `APP_DB_USER`, …       | MySQL connection                          | `app`   |
 | `APP_DB_HOST` / `APP_DB_PORT`    | DB host / port (inside the network)       | `db` / `3306` |
-| `BINANCE_API_KEY` / `_SECRET`    | Optional — **not needed** for public ticker | empty |
+| `BINANCE_API_KEY` / `_SECRET`    | Optional — **not needed** for public market data | empty |
 | `API_SIGNING_SECRET`             | HMAC secret for the response signature    | dev placeholder |
 | `API_SIGNING_KEY_ID`             | Signing key identifier (supports rotation) | `v1`   |
 
-> The ticker-price endpoint is public, so no Binance credentials are required.
+> The klines (candlestick) endpoint is public, so no Binance credentials are required.
 >
 > Tests need no `.env`: the `app_test` database name is derived in
 > `config/packages/test/doctrine.yaml`, and deterministic test-only values live in
@@ -163,8 +170,8 @@ Every response — success and error — is wrapped in a consistent, signed enve
   "data": {
     "pair": "EUR/BTC",
     "points": [
-      { "timestamp": "2026-06-06T15:52:00+00:00", "price": "52878.09" },
-      { "timestamp": "2026-06-06T15:57:00+00:00", "price": "52910.42" }
+      { "timestamp": "2026-06-06T15:50:00+00:00", "price": "52878.09" },
+      { "timestamp": "2026-06-06T15:55:00+00:00", "price": "52910.42" }
     ]
   },
   "security": {
@@ -253,5 +260,5 @@ docker exec paybis-app composer cs-check     # PSR-12 lint  (cs-fix to auto-fix)
 Integration tests run against the `app_test` database (created automatically) and
 each test is wrapped in a transaction that is rolled back.
 
-[binance]: https://developers.binance.com/docs/binance-spot-api-docs/rest-api/market-data-endpoints#symbol-price-ticker
+[binance]: https://developers.binance.com/docs/binance-spot-api-docs/rest-api/market-data-endpoints#klinecandlestick-data
 [brick/money]: https://github.com/brick/money

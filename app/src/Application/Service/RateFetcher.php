@@ -11,14 +11,15 @@ use App\Domain\ExchangeRate\RateRepository;
 use Psr\Log\LoggerInterface;
 
 /**
- * Fetches the current price for every supported pair from Binance and persists
- * one rate sample per pair. A failure for one pair is logged and isolated so it
- * never aborts the others.
+ * Fetches the latest closed 5-minute candle for every supported pair from Binance
+ * and persists one rate sample per pair, stamped with the candle's grid-aligned
+ * open time. A failure for one pair is logged and isolated so it never aborts the
+ * others.
  */
 final readonly class RateFetcher
 {
     public function __construct(
-        private TickerPriceProvider $binance,
+        private ClosedCandleProvider $binance,
         private RateRepository $repository,
         private LoggerInterface $logger,
     ) {
@@ -26,21 +27,21 @@ final readonly class RateFetcher
 
     public function fetchAll(): RateFetchReport
     {
-        $recordedAt = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
         $fetched = 0;
         $failed = 0;
 
         foreach (CurrencyPair::all() as $pair) {
             try {
-                $price = $this->binance->getTickerPrice($pair->binanceSymbol());
-                $rate = Rate::fromString($price);
+                $candle = $this->binance->latestClosedCandle($pair->binanceSymbol());
+                $rate = Rate::fromString($candle->closePrice);
 
-                $this->repository->save(new ExchangeRate($pair, $rate, $recordedAt));
+                $this->repository->save(new ExchangeRate($pair, $rate, $candle->openTime));
 
                 ++$fetched;
                 $this->logger->info('Stored exchange rate.', [
-                    'pair'  => $pair->value(),
-                    'price' => $rate->asString(),
+                    'pair'        => $pair->value(),
+                    'price'       => $rate->asString(),
+                    'recorded_at' => $candle->openTime->format(\DateTimeInterface::ATOM),
                 ]);
             } catch (\Throwable $e) {
                 ++$failed;

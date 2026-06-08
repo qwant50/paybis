@@ -67,7 +67,7 @@ services:
             $secretKey: '%binance.api_secret%'
             $testnet: false
 
-    App\Application\Service\TickerPriceProvider: '@App\Infrastructure\Binance\BinanceService'
+    App\Application\Service\ClosedCandleProvider: '@App\Infrastructure\Binance\BinanceService'
 
     # Rate persistence port -> Doctrine adapter.
     App\Domain\ExchangeRate\RateRepository: '@App\Infrastructure\Doctrine\Repository\ExchangeRateRepository'

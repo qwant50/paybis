@@ -4,8 +4,9 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Application\Service;
 
+use App\Application\Service\ClosedCandle;
+use App\Application\Service\ClosedCandleProvider;
 use App\Application\Service\RateFetcher;
-use App\Application\Service\TickerPriceProvider;
 use App\Domain\ExchangeRate\ExchangeRate;
 use App\Domain\ExchangeRate\RateRepository;
 use Codeception\Test\Unit;
@@ -13,21 +14,24 @@ use Psr\Log\LoggerInterface;
 
 final class RateFetcherTest extends Unit
 {
-    public function testItFetchesAndStoresEveryPair(): void
+    public function testItFetchesAndStoresEveryPairStampedWithTheCandleOpenTime(): void
     {
+        $openTime = new \DateTimeImmutable('2026-03-15 12:05:00', new \DateTimeZone('UTC'));
         $prices = ['BTCEUR' => '52878.09', 'ETHEUR' => '1357.96', 'LTCEUR' => '36.87'];
 
-        $binance = $this->createMock(TickerPriceProvider::class);
-        $binance->method('getTickerPrice')->willReturnCallback(
-            static fn (string $symbol): string => $prices[$symbol],
+        $binance = $this->createMock(ClosedCandleProvider::class);
+        $binance->method('latestClosedCandle')->willReturnCallback(
+            static fn (string $symbol): ClosedCandle => new ClosedCandle($prices[$symbol], $openTime),
         );
 
         $saved = [];
+        $recordedAt = [];
         $repository = $this->createMock(RateRepository::class);
         $repository->expects($this->exactly(3))
             ->method('save')
-            ->willReturnCallback(static function (ExchangeRate $rate) use (&$saved): void {
+            ->willReturnCallback(static function (ExchangeRate $rate) use (&$saved, &$recordedAt): void {
                 $saved[$rate->pair->value()] = $rate->rate->asString();
+                $recordedAt[$rate->pair->value()] = $rate->recordedAt;
             });
 
         $report = (new RateFetcher($binance, $repository, $this->createMock(LoggerInterface::class)))->fetchAll();
@@ -40,18 +44,25 @@ final class RateFetcherTest extends Unit
             'EUR/ETH' => '1357.960000000000',
             'EUR/LTC' => '36.870000000000',
         ], $saved);
+
+        // Every sample is stamped with the candle's grid-aligned open time.
+        foreach ($recordedAt as $when) {
+            $this->assertEquals($openTime, $when);
+        }
     }
 
     public function testItIsolatesAFailingPair(): void
     {
-        $binance = $this->createMock(TickerPriceProvider::class);
-        $binance->method('getTickerPrice')->willReturnCallback(
-            static function (string $symbol): string {
+        $openTime = new \DateTimeImmutable('2026-03-15 12:05:00', new \DateTimeZone('UTC'));
+
+        $binance = $this->createMock(ClosedCandleProvider::class);
+        $binance->method('latestClosedCandle')->willReturnCallback(
+            static function (string $symbol) use ($openTime): ClosedCandle {
                 if ($symbol === 'ETHEUR') {
                     throw new \RuntimeException('Binance down for ETH');
                 }
 
-                return '100.00';
+                return new ClosedCandle('100.00', $openTime);
             },
         );
 

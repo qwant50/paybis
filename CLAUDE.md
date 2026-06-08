@@ -9,6 +9,11 @@ EUR→ETH, EUR→LTC** prices from the Binance Spot API every 5 minutes (Symfony
 Scheduler → Messenger worker), stores one sample per pair, and exposes them as
 JSON for charting (last 24h, and a specific UTC day) with OpenAPI/Swagger docs.
 
+Prices come from Binance **5-minute klines**: each fetch stores the last *closed*
+candle's close price, stamped with the candle's `openTime`, so every sample lands
+exactly on the 5-minute UTC grid (`:00/:05/:10…`). Storing the same `(pair, slot)`
+again is an idempotent no-op — a closed candle is immutable history.
+
 PHP 8.4 / Symfony 8 (resolves to 8.1). MySQL 8, Doctrine ORM 3 / DBAL 4. Runs in
 Docker behind nginx → PHP-FPM. Prices are kept loss-free as `DECIMAL(30,12)` via
 `brick/money`.
@@ -136,11 +141,13 @@ Strict layered DDD under `app/src/`:
   errors (extend `\InvalidArgumentException`); their messages are client-safe.
 
 ### Application — `Application/`
-- `Service/TickerPriceProvider` (interface) — port abstracting market-data access;
-  its Binance adapter lives in Infrastructure. Depend on the interface.
-- `Service/RateFetcher` — fetches every supported pair, persists one `ExchangeRate`
-  each via `RateRepository`, **isolates per-pair failures** (logs, continues),
-  returns a `RateFetchReport`.
+- `Service/ClosedCandleProvider` (interface) — port abstracting market-data access;
+  returns a `ClosedCandle` (close price + grid-aligned open time) for a symbol. Its
+  Binance adapter lives in Infrastructure. Depend on the interface.
+- `Service/RateFetcher` — fetches every supported pair's latest closed 5-minute
+  candle, persists one `ExchangeRate` each via `RateRepository` **stamped with the
+  candle's open time** (not the local clock), **isolates per-pair failures** (logs,
+  continues), returns a `RateFetchReport`.
 - `Query/RateQueryService` — read side over `RateRepository`: `lastDay()` (rolling
   24h) and `forDay()` (a UTC calendar day `[00:00, next 00:00)`), each returning
   `list<ExchangeRate>`. All windows are UTC.
@@ -149,8 +156,11 @@ The Application layer holds no framework/SDK imports: the Binance adapter and th
 Symfony Scheduler/Messenger glue both live in Infrastructure (see below).
 
 ### Infrastructure — `Infrastructure/`
-- `Binance/BinanceService` — the `TickerPriceProvider` adapter; a thin wrapper
+- `Binance/BinanceService` — the `ClosedCandleProvider` adapter; a thin wrapper
   over the Binance spot REST client (the only place the Binance SDK is imported).
+  Fetches `klines` at `Interval::INTERVAL_5M` and returns the **last *closed*
+  candle** (its close price + on-grid `openTime`) — the interval here must match
+  the scheduler cadence.
 - `Scheduler/` — `RatesSchedule` (`#[AsSchedule('rates')]`, stateful, every 5 min)
   dispatches `FetchRatesMessage`, handled by `FetchRatesMessageHandler` →
   `RateFetcher`. The framework's scheduling/messaging entry points live here so
@@ -185,7 +195,9 @@ Symfony Scheduler/Messenger glue both live in Infrastructure (see below).
   (the **single place** that maps `ExchangeRateDoctrine` entity ↔ domain
   `ExchangeRate`, via `domainToDoctrine()` / `doctrineToDomain()`), and
   `Migrations/`. `ExchangeRateRepository.findBetween()` returns chronological
-  domain samples.
+  domain samples; `save()` is **idempotent per `(pair, recorded_at)` slot** —
+  an already-stored slot is skipped, never overwritten (backstopped by the
+  `UNIQUE (pair, recorded_at)` index).
 
 ## Key Patterns
 
@@ -281,5 +293,5 @@ Supervisor program reports `RUNNING`; if any program drops to a non-RUNNING stat
 - PSR-4: `App\` → `src/`, `Tests\` → `tests/`. PSR-12 (`composer cs-fix`).
 - Prefer immutable `final readonly` value objects and constructor injection.
 - Time is **UTC** everywhere (storage, queries, parsing).
-- Unit tests mock collaborators via `$this->createMock(...)` (e.g. `TickerPriceProvider`,
+- Unit tests mock collaborators via `$this->createMock(...)` (e.g. `ClosedCandleProvider`,
   `LoggerInterface`); integration tests use `haveInRepository(...)`.

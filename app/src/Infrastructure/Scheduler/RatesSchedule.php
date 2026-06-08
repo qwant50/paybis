@@ -25,6 +25,9 @@ final class RatesSchedule implements ScheduleProviderInterface
 
     public function getSchedule(): Schedule
     {
+        // The cadence must match the candle interval fetched in
+        // App\Infrastructure\Binance\BinanceService (Interval::INTERVAL_5M): each
+        // tick captures the previous closed 5-minute candle.
         return new Schedule()
             ->add(RecurringMessage::every('5 minutes', new FetchRatesMessage()))
             ->stateful($this->cache);

@@ -28,8 +28,22 @@ class ExchangeRateRepository extends ServiceEntityRepository implements RateRepo
 
     public function save(ExchangeRate $exchangeRate): void
     {
-        $this->getEntityManager()->persist($this->mapper->domainToDoctrine($exchangeRate));
-        $this->getEntityManager()->flush();
+        // Idempotent per (pair, 5-minute slot): a closed candle is immutable
+        // history, so a sample already stored for this slot is never overwritten.
+        // The single scheduler worker makes this check-then-insert race-free in
+        // practice; the UNIQUE (pair, recorded_at) index is the hard backstop.
+        $exists = $this->count([
+            'pair'       => $exchangeRate->pair->value(),
+            'recordedAt' => $exchangeRate->recordedAt,
+        ]) > 0;
+
+        if ($exists) {
+            return;
+        }
+
+        $em = $this->getEntityManager();
+        $em->persist($this->mapper->domainToDoctrine($exchangeRate));
+        $em->flush();
     }
 
     /**

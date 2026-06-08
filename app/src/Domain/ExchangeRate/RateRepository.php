@@ -13,6 +13,11 @@ namespace App\Domain\ExchangeRate;
  */
 interface RateRepository
 {
+    /**
+     * Persist a rate sample. Idempotent per (pair, recorded-at slot): a sample
+     * already stored for that slot is left untouched — historical prices are
+     * never overwritten.
+     */
     public function save(ExchangeRate $exchangeRate): void;
 
     /**
