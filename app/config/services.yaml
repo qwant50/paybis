@@ -74,7 +74,14 @@ services:
         arguments:
             $spotRestApi: '@Binance\Client\Spot\Api\SpotRestApi'
 
-    App\Application\Service\PriceHistoryProvider: '@App\Infrastructure\Binance\BinanceService'
+    # Resilience decorator: retries transient Binance failures with backoff.
+    # $inner must be wired explicitly to the bare adapter, else autowiring would
+    # resolve PriceHistoryProvider to this decorator and wrap itself.
+    App\Infrastructure\Binance\RetryingPriceHistoryProvider:
+        arguments:
+            $inner: '@App\Infrastructure\Binance\BinanceService'
+
+    App\Application\Service\PriceHistoryProvider: '@App\Infrastructure\Binance\RetryingPriceHistoryProvider'
 
     # Rate persistence port -> Doctrine adapter.
     App\Domain\ExchangeRate\RateRepository: '@App\Infrastructure\Doctrine\Repository\ExchangeRateRepository'

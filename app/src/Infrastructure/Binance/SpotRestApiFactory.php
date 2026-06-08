@@ -23,13 +23,28 @@ final readonly class SpotRestApiFactory
     }
 
     /**
+     * @param int $connectTimeoutSeconds max time to establish the TCP/TLS connection
+     * @param int $readTimeoutSeconds    max time to wait for the response
+     *
      * @throws \RuntimeException when the client cannot be initialised
      */
-    public function create(string $apiKey, string $secretKey, bool $testnet = false): SpotRestApi
-    {
+    public function create(
+        string $apiKey,
+        string $secretKey,
+        bool $testnet = false,
+        int $connectTimeoutSeconds = 3,
+        int $readTimeoutSeconds = 8,
+    ): SpotRestApi {
         try {
             $builder = SpotRestApiUtil::getConfigurationBuilder();
             $builder->apiKey($apiKey)->secretKey($secretKey);
+
+            // Bound how long a scheduled fetch can hang on a slow/unreachable Binance:
+            // without this the SDK's defaults (1000/5000) reach Guzzle as *seconds*
+            // (it mislabels them "ms" but applies no conversion), i.e. effectively no
+            // timeout. A bounded attempt is also the precondition for the retry in
+            // {@see RetryingPriceHistoryProvider}.
+            $builder->connectTimeout($connectTimeoutSeconds)->readTimeout($readTimeoutSeconds);
 
             if ($testnet) {
                 $builder->url('https://testnet.binance.vision');
