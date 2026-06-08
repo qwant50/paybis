@@ -60,12 +60,19 @@ services:
     Psr\Container\ContainerInterface: '@service_container'
 
     # Binance spot REST client wrapper. Public market-data endpoints need no
-    # credentials, so empty key/secret are fine.
-    App\Infrastructure\Binance\BinanceService:
+    # credentials, so empty key/secret are fine. The configured SDK client is
+    # built by the factory and injected, keeping BinanceService unit-testable.
+    # (SpotRestApiFactory itself is autowired via the App\ resource above.)
+    Binance\Client\Spot\Api\SpotRestApi:
+        factory: ['@App\Infrastructure\Binance\SpotRestApiFactory', 'create']
         arguments:
             $apiKey: '%binance.api_key%'
             $secretKey: '%binance.api_secret%'
             $testnet: false
+
+    App\Infrastructure\Binance\BinanceService:
+        arguments:
+            $spotRestApi: '@Binance\Client\Spot\Api\SpotRestApi'
 
     App\Application\Service\ClosedCandleProvider: '@App\Infrastructure\Binance\BinanceService'
 
