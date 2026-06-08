@@ -25,13 +25,34 @@ final class ExchangeRateRepositoryCest
         $pair = CurrencyPair::fromString('EUR/BTC');
         $slot = new \DateTimeImmutable('2026-03-15 12:05:00', new \DateTimeZone('UTC'));
 
-        $repository->save(new ExchangeRate($pair, Rate::fromString('52878.09'), $slot));
+        $inserted = $repository->save(new ExchangeRate($pair, Rate::fromString('52878.09'), $slot));
         // Same slot, different price — must be ignored.
-        $repository->save(new ExchangeRate($pair, Rate::fromString('99999.99'), $slot));
+        $skipped = $repository->save(new ExchangeRate($pair, Rate::fromString('99999.99'), $slot));
+
+        // The bool return is the contract the fetcher reports on: true = inserted.
+        $I->assertTrue($inserted);
+        $I->assertFalse($skipped);
 
         $I->assertSame(1, $I->grabNumRecords(ExchangeRateDoctrine::class, ['pair' => 'EUR/BTC']));
 
         $stored = $I->grabEntityFromRepository(ExchangeRateDoctrine::class, ['pair' => 'EUR/BTC']);
         $I->assertSame('52878.090000000000', $stored->getPrice());
+    }
+
+    /**
+     * A distinct slot for the same pair is a separate row, and a fresh insert
+     * reports true — the upsert only no-ops on the exact (pair, recorded_at) key.
+     */
+    public function saveStoresDistinctSlotsForTheSamePair(IntegrationTester $I): void
+    {
+        $repository = $I->grabService(ExchangeRateRepository::class);
+        $pair = CurrencyPair::fromString('EUR/ETH');
+
+        $first = $repository->save(new ExchangeRate($pair, Rate::fromString('1300.00'), new \DateTimeImmutable('2026-03-15 12:00:00', new \DateTimeZone('UTC'))));
+        $second = $repository->save(new ExchangeRate($pair, Rate::fromString('1357.96'), new \DateTimeImmutable('2026-03-15 12:05:00', new \DateTimeZone('UTC'))));
+
+        $I->assertTrue($first);
+        $I->assertTrue($second);
+        $I->assertSame(2, $I->grabNumRecords(ExchangeRateDoctrine::class, ['pair' => 'EUR/ETH']));
     }
 }

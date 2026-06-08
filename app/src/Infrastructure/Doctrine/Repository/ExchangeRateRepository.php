@@ -9,7 +9,9 @@ use App\Domain\ExchangeRate\ExchangeRate;
 use App\Domain\ExchangeRate\RateRepository;
 use App\Infrastructure\Doctrine\Entity\ExchangeRateDoctrine;
 use App\Infrastructure\Doctrine\Mapper\ExchangeRateMapper;
+use App\Infrastructure\Doctrine\Type\DateTimeImmutableMicrosecondType;
 use Doctrine\Bundle\DoctrineBundle\Repository\ServiceEntityRepository;
+use Doctrine\DBAL\Types\Types;
 use Doctrine\Persistence\ManagerRegistry;
 
 /**
@@ -28,24 +30,23 @@ class ExchangeRateRepository extends ServiceEntityRepository implements RateRepo
 
     public function save(ExchangeRate $exchangeRate): bool
     {
-        // Idempotent per (pair, 5-minute slot): a closed candle is immutable
-        // history, so a sample already stored for this slot is never overwritten.
-        // The single scheduler worker makes this check-then-insert race-free in
-        // practice; the UNIQUE (pair, recorded_at) index is the hard backstop.
-        $exists = $this->count([
-            'pair'       => $exchangeRate->pair->value(),
-            'recordedAt' => $exchangeRate->recordedAt,
-        ]) > 0;
+        $affected = $this->getEntityManager()->getConnection()->executeStatement(
+            'INSERT INTO exchange_rate (pair, price, recorded_at, created_at)
+             VALUES (:pair, :price, :recorded_at, :created_at)
+             ON DUPLICATE KEY UPDATE id = id',
+            [
+                'pair'        => $exchangeRate->pair->value(),
+                'price'       => $exchangeRate->rate->asString(),
+                'recorded_at' => $exchangeRate->recordedAt,
+                'created_at'  => new \DateTimeImmutable(),
+            ],
+            [
+                'recorded_at' => Types::DATETIME_IMMUTABLE,
+                'created_at'  => DateTimeImmutableMicrosecondType::NAME,
+            ],
+        );
 
-        if ($exists) {
-            return false;
-        }
-
-        $em = $this->getEntityManager();
-        $em->persist($this->mapper->domainToDoctrine($exchangeRate));
-        $em->flush();
-
-        return true;
+        return (int) $affected > 0;
     }
 
     /**
