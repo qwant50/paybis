@@ -16,7 +16,7 @@ use OpenApi\Attributes as OA;
 final readonly class RatePoint
 {
     public function __construct(
-        #[OA\Property(type: 'string', format: 'date-time', example: '2026-06-06T15:52:00+00:00')]
+        #[OA\Property(type: 'string', format: 'date-time', example: '2026-06-06T15:50:00+00:00')]
         public string $timestamp,
         #[OA\Property(type: 'string', example: '52878.09')]
         public string $price,

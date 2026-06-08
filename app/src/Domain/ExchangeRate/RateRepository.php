@@ -17,8 +17,10 @@ interface RateRepository
      * Persist a rate sample. Idempotent per (pair, recorded-at slot): a sample
      * already stored for that slot is left untouched — historical prices are
      * never overwritten.
+     *
+     * @return bool true if a new sample was inserted, false if the slot already existed
      */
-    public function save(ExchangeRate $exchangeRate): void;
+    public function save(ExchangeRate $exchangeRate): bool;
 
     /**
      * Exchange rates for a pair within the half-open interval [$from, $to),

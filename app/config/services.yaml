@@ -74,7 +74,7 @@ services:
         arguments:
             $spotRestApi: '@Binance\Client\Spot\Api\SpotRestApi'
 
-    App\Application\Service\ClosedCandleProvider: '@App\Infrastructure\Binance\BinanceService'
+    App\Application\Service\PriceHistoryProvider: '@App\Infrastructure\Binance\BinanceService'
 
     # Rate persistence port -> Doctrine adapter.
     App\Domain\ExchangeRate\RateRepository: '@App\Infrastructure\Doctrine\Repository\ExchangeRateRepository'

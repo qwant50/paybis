@@ -26,7 +26,7 @@ class ExchangeRateRepository extends ServiceEntityRepository implements RateRepo
         parent::__construct($registry, ExchangeRateDoctrine::class);
     }
 
-    public function save(ExchangeRate $exchangeRate): void
+    public function save(ExchangeRate $exchangeRate): bool
     {
         // Idempotent per (pair, 5-minute slot): a closed candle is immutable
         // history, so a sample already stored for this slot is never overwritten.
@@ -38,12 +38,14 @@ class ExchangeRateRepository extends ServiceEntityRepository implements RateRepo
         ]) > 0;
 
         if ($exists) {
-            return;
+            return false;
         }
 
         $em = $this->getEntityManager();
         $em->persist($this->mapper->domainToDoctrine($exchangeRate));
         $em->flush();
+
+        return true;
     }
 
     /**

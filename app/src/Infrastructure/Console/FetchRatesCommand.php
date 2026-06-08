@@ -33,9 +33,9 @@ final class FetchRatesCommand extends Command
         $report = $this->rateFetcher->fetchAll();
 
         $io->success(sprintf(
-            'Fetched %d of %d rates (%d failed).',
-            $report->fetched,
-            $report->total(),
+            'Stored %d new, skipped %d, failed %d.',
+            $report->stored,
+            $report->skipped,
             $report->failed,
         ));
 

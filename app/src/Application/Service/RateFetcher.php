@@ -11,15 +11,19 @@ use App\Domain\ExchangeRate\RateRepository;
 use Psr\Log\LoggerInterface;
 
 /**
- * Fetches the latest closed 5-minute candle for every supported pair from Binance
- * and persists one rate sample per pair, stamped with the candle's grid-aligned
- * open time. A failure for one pair is logged and isolated so it never aborts the
- * others.
+ * Fetches a window of recent price points for every supported pair from Binance and
+ * persists one rate sample per point, stamped with the point's grid-aligned open
+ * time. Storing a window (not just the latest point) backfills any 5-minute slots
+ * missed during downtime; already-stored slots are skipped idempotently.
+ *
+ * Failures are isolated on two levels so one bad pair or point never aborts the
+ * rest: a pair whose fetch fails is logged and skipped, and a point that cannot be
+ * parsed or stored is logged and skipped within its pair's batch.
  */
 final readonly class RateFetcher
 {
     public function __construct(
-        private ClosedCandleProvider $binance,
+        private PriceHistoryProvider $binance,
         private RateRepository $repository,
         private LoggerInterface $logger,
     ) {
@@ -27,34 +31,53 @@ final readonly class RateFetcher
 
     public function fetchAll(): RateFetchReport
     {
-        $fetched = 0;
+        $stored = 0;
+        $skipped = 0;
         $failed = 0;
 
         foreach (CurrencyPair::all() as $pair) {
             try {
-                $candle = $this->binance->latestClosedCandle($pair->binanceSymbol());
-                $rate = Rate::fromString($candle->closePrice);
-
-                $this->repository->save(new ExchangeRate($pair, $rate, $candle->openTime));
-
-                ++$fetched;
-                $this->logger->info('Stored exchange rate.', [
-                    'pair'        => $pair->value(),
-                    'price'       => $rate->asString(),
-                    'recorded_at' => $candle->openTime->format(\DateTimeInterface::ATOM),
-                ]);
+                $points = $this->binance->recentPricePoints($pair->binanceSymbol());
             } catch (\Throwable $e) {
                 ++$failed;
-                $this->logger->error('Failed to fetch exchange rate.', [
+                $this->logger->error('Failed to fetch exchange rates.', [
                     'pair'      => $pair->value(),
                     'exception' => $e,
                 ]);
+
+                continue;
+            }
+
+            foreach ($points as $point) {
+                try {
+                    $rate = Rate::fromString($point->price);
+                    $inserted = $this->repository->save(new ExchangeRate($pair, $rate, $point->time));
+
+                    if ($inserted) {
+                        ++$stored;
+                        $this->logger->info('Stored exchange rate.', [
+                            'pair'        => $pair->value(),
+                            'price'       => $rate->asString(),
+                            'recorded_at' => $point->time->format(\DateTimeInterface::ATOM),
+                        ]);
+                    } else {
+                        ++$skipped;
+                    }
+                } catch (\Throwable $e) {
+                    ++$failed;
+                    $this->logger->error('Failed to store exchange rate.', [
+                        'pair'        => $pair->value(),
+                        'recorded_at' => $point->time->format(\DateTimeInterface::ATOM),
+                        'exception'   => $e,
+                    ]);
+                }
             }
         }
 
-        $report = new RateFetchReport($fetched, $failed);
+        $report = new RateFetchReport($stored, $skipped, $failed);
         $this->logger->info('Rate fetch run complete.', [
-            'fetched' => $report->fetched,
+            'stored'  => $report->stored,
+            'skipped' => $report->skipped,
             'failed'  => $report->failed,
         ]);
 

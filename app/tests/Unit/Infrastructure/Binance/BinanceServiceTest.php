@@ -16,73 +16,67 @@ final class BinanceServiceTest extends Unit
 {
     private const string SYMBOL = 'BTCEUR';
 
-    public function testItExcludesTheStillFormingCandleAndReturnsTheLatestClosedOne(): void
+    public function testItMapsEveryCandleToAnOpenPricePointIncludingTheFormingOne(): void
     {
-        $now = self::nowMs();
-        $gridOpen = (new \DateTimeImmutable('2026-03-15 12:05:00', new \DateTimeZone('UTC')))->getTimestamp() * 1000;
+        $gridOpen = (new \DateTimeImmutable('2026-03-15 12:00:00', new \DateTimeZone('UTC')))->getTimestamp() * 1000;
 
-        // Ascending by open time; the last candle is still forming (close time in
-        // the future), the middle one is the most recent *closed* candle.
+        // Ascending by open time; the last candle is still forming. Its open price
+        // is already final, so it is kept like the rest.
         $service = $this->serviceReturning([
-            self::row($gridOpen - 300_000, '52000.00', $now - 600_000),
-            self::row($gridOpen, '52878.09', $now - 300_000),
-            self::row($gridOpen + 300_000, '52999.99', $now + 300_000),
+            self::row($gridOpen, '52000.00'),
+            self::row($gridOpen + 300_000, '52878.09'),
+            self::row($gridOpen + 600_000, '52999.99'),
         ]);
 
-        $candle = $service->latestClosedCandle(self::SYMBOL);
+        $points = $service->recentPricePoints(self::SYMBOL);
 
-        $this->assertSame('52878.09', $candle->closePrice);
+        $this->assertCount(3, $points);
+        $this->assertSame(['52000.00', '52878.09', '52999.99'], array_map(static fn ($p) => $p->price, $points));
         $this->assertEquals(
-            new \DateTimeImmutable('2026-03-15 12:05:00', new \DateTimeZone('UTC')),
-            $candle->openTime,
+            new \DateTimeImmutable('2026-03-15 12:00:00', new \DateTimeZone('UTC')),
+            $points[0]->time,
         );
-        $this->assertSame('00', $candle->openTime->format('s'));
+        // Open times are whole-second, on the 5-minute grid.
+        foreach ($points as $point) {
+            $this->assertSame('00', $point->time->format('s'));
+        }
     }
 
-    public function testItFallsBackToAnOlderClosedCandleAtAnIntervalBoundary(): void
+    public function testItUsesTheOpenPriceNotTheClosePrice(): void
     {
-        $now = self::nowMs();
+        // open = 100.00 (column 1), close = 999.99 (column 4): we must read the open.
+        $service = $this->serviceReturning([self::row(1_700_000_000_000, '100.00', '999.99')]);
 
-        // Simulated boundary + clock skew: the freshest just-closed candle's close
-        // time reads as not-yet-passed, and the last candle is forming. The older
-        // candle is unambiguously closed, so a valid candle is still returned.
+        $points = $service->recentPricePoints(self::SYMBOL);
+
+        $this->assertSame('100.00', $points[0]->price);
+    }
+
+    public function testItSkipsMalformedRowsButKeepsValidOnes(): void
+    {
         $service = $this->serviceReturning([
-            self::row(1_700_000_000_000, '49000.00', $now - 300_000),
-            self::row(1_700_000_300_000, '49500.00', $now + 1_000),
-            self::row(1_700_000_600_000, '49750.00', $now + 300_000),
+            new KlinesItem(['1700000000000']), // too few columns
+            self::row(1_700_000_300_000, ''),  // empty open price
+            self::row(1_700_000_600_000, '49750.00'),
         ]);
 
-        $candle = $service->latestClosedCandle(self::SYMBOL);
+        $points = $service->recentPricePoints(self::SYMBOL);
 
-        $this->assertSame('49000.00', $candle->closePrice);
+        $this->assertCount(1, $points);
+        $this->assertSame('49750.00', $points[0]->price);
     }
 
-    public function testItThrowsWhenNoClosedCandleIsAvailable(): void
+    public function testItThrowsWhenNoUsablePointIsAvailable(): void
     {
-        $now = self::nowMs();
         $service = $this->serviceReturning([
-            self::row(1_700_000_000_000, '49000.00', $now + 300_000),
-            self::row(1_700_000_300_000, '49500.00', $now + 600_000),
-        ]);
-
-        $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessageMatches('/no closed candle/i');
-
-        $service->latestClosedCandle(self::SYMBOL);
-    }
-
-    public function testItThrowsWhenTheClosedCandleHasAnEmptyClosePrice(): void
-    {
-        $now = self::nowMs();
-        $service = $this->serviceReturning([
-            self::row(1_700_000_000_000, '', $now - 300_000),
-            self::row(1_700_000_300_000, '49500.00', $now + 300_000),
+            new KlinesItem(['1700000000000']),
+            self::row(1_700_000_300_000, ''),
         ]);
 
         $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessageMatches('/empty close price/i');
+        $this->expectExceptionMessageMatches('/no usable price points/i');
 
-        $service->latestClosedCandle(self::SYMBOL);
+        $service->recentPricePoints(self::SYMBOL);
     }
 
     public function testItWrapsApiExceptionsWithTheSymbol(): void
@@ -94,7 +88,7 @@ final class BinanceServiceTest extends Unit
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessageMatches('/BTCEUR/');
 
-        $service->latestClosedCandle(self::SYMBOL);
+        $service->recentPricePoints(self::SYMBOL);
     }
 
     /**
@@ -111,22 +105,18 @@ final class BinanceServiceTest extends Unit
     }
 
     /**
-     * A raw Binance kline row: [0]=openTime ms, [4]=close, [6]=closeTime ms.
+     * A raw Binance kline row: [0]=openTime ms, [1]=open, [4]=close, [6]=closeTime ms.
      */
-    private static function row(int $openTimeMs, string $close, int $closeTimeMs): KlinesItem
+    private static function row(int $openTimeMs, string $open, string $close = '0'): KlinesItem
     {
         return new KlinesItem([
             (string) $openTimeMs, // 0 open time
-            '0', '0', '0',        // 1 open, 2 high, 3 low
+            $open,                // 1 open
+            '0', '0',             // 2 high, 3 low
             $close,               // 4 close
             '0',                  // 5 volume
-            (string) $closeTimeMs, // 6 close time
+            (string) ($openTimeMs + 300_000), // 6 close time
             '0', '0', '0', '0', '0', // 7-11 quote vol, trades, taker buy base/quote, ignore
         ]);
-    }
-
-    private static function nowMs(): int
-    {
-        return (int) (microtime(true) * 1000);
     }
 }
