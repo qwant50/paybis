@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace App\Application\Query;
+namespace App\Application\ExchangeRate\Query;
 
 use App\Domain\ExchangeRate\CurrencyPair;
 use App\Domain\ExchangeRate\ExchangeRate;

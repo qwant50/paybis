@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace App\Infrastructure\Binance;
 
-use App\Application\Service\PriceHistoryProvider;
-use App\Application\Service\PricePoint;
+use App\Application\ExchangeRate\Service\PriceHistoryProvider;
+use App\Application\ExchangeRate\Service\PricePoint;
 use Psr\Log\LoggerInterface;
 
 /**
@@ -17,7 +17,7 @@ use Psr\Log\LoggerInterface;
  * network blip or 5xx would otherwise drop a pair's slot until the next 5-minute
  * tick. Retrying within the run recovers from those blips. Failures are surfaced
  * as the same {@see \RuntimeException} the port already declares, so the caller
- * ({@see \App\Application\Service\RateFetcher}) keeps isolating a permanently
+ * ({@see \App\Application\ExchangeRate\Service\RateFetcher}) keeps isolating a permanently
  * failing pair exactly as before — this only adds attempts underneath.
  *
  * Kept separate from {@see BinanceService} (decorator, not inline) so the adapter

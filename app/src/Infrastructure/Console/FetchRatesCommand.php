@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\Infrastructure\Console;
 
-use App\Application\Service\RateFetcher;
+use App\Application\ExchangeRate\Service\RateFetcher;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;

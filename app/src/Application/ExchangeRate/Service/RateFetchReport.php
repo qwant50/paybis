@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace App\Application\Service;
+namespace App\Application\ExchangeRate\Service;
 
 /**
  * Outcome of a single {@see RateFetcher::fetchAll()} run, counted at price-point

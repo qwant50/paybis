@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace App\Application\Service;
+namespace App\Application\ExchangeRate\Service;
 
 /**
  * Provides recent grid-aligned price points for a Binance symbol. Abstraction over

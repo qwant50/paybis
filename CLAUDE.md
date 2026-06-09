@@ -144,23 +144,34 @@ Strict layered DDD under `app/src/`:
 - `Exception/InvalidPairException`, `Exception/InvalidDateException` — domain input
   errors (extend `\InvalidArgumentException`); their messages are client-safe.
 
-### Application — `Application/`
-- `Service/PriceHistoryProvider` (interface) — port abstracting market-data access;
+### Application — `Application/ExchangeRate/`
+The Application layer is **grouped by bounded context** (mirroring `Domain/`), so
+each context's use cases live under `Application/<Context>/`. Today there is one
+context, `ExchangeRate`, with read/write sides split into `Query/` and `Service/`.
+- `ExchangeRate/Service/PriceHistoryProvider` (interface) — port abstracting market-data access;
   returns a `list<PricePoint>` (each = open price + grid-aligned open time) for a
   symbol. Its Binance adapter lives in Infrastructure. Depend on the interface.
-- `Service/RateFetcher` — fetches a window of recent `PricePoint`s for every
+- `ExchangeRate/Service/RateFetcher` — fetches a window of recent `PricePoint`s for every
   supported pair, persists one `ExchangeRate` per point via `RateRepository`
   **stamped with the point's open time** (not the local clock). Storing a window
   backfills slots missed during downtime (idempotent `save()` skips ones already
   stored). **Isolates failures on two levels** — a failing pair's fetch and a single
   bad point each log and continue. Returns a `RateFetchReport` (`stored`, `skipped`,
   `failed`).
-- `Query/RateQueryService` — read side over `RateRepository`: `lastDay()` (rolling
+- `ExchangeRate/Query/RateQueryService` — read side over `RateRepository`: `lastDay()` (rolling
   24h) and `forDay()` (a UTC calendar day `[00:00, next 00:00)`), each returning
   `list<ExchangeRate>`. All windows are UTC.
 
 The Application layer holds no framework/SDK imports: the Binance adapter and the
 Symfony Scheduler/Messenger glue both live in Infrastructure (see below).
+
+> **Future direction — delivery layer.** All adapters, *driving* (HTTP controllers,
+> Console, Scheduler) and *driven* (Doctrine, Binance), currently live under
+> `Infrastructure/` — orthodox Ports & Adapters. If a dedicated delivery layer
+> (`Presentation`/`UserInterface`) is later extracted, it must move **all** inbound
+> adapters together (HTTP **and** Console **and** Scheduler), not HTTP alone — a
+> partial split would make the layering inconsistent. Defer it until a second
+> context, API version, or delivery mechanism actually arrives.
 
 ### Infrastructure — `Infrastructure/`
 - `Binance/BinanceService` — the `PriceHistoryProvider` adapter; a thin wrapper

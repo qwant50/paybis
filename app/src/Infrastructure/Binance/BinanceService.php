@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace App\Infrastructure\Binance;
 
-use App\Application\Service\PriceHistoryProvider;
-use App\Application\Service\PricePoint;
+use App\Application\ExchangeRate\Service\PriceHistoryProvider;
+use App\Application\ExchangeRate\Service\PricePoint;
 use Binance\Client\Spot\Api\SpotRestApi;
 use Binance\Client\Spot\Model\Interval;
 use Binance\Common\ApiException;

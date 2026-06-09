@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Infrastructure\Scheduler;
 
-use App\Application\Service\Metrics;
-use App\Application\Service\PriceHistoryProvider;
-use App\Application\Service\RateFetcher;
+use App\Application\ExchangeRate\Service\Metrics;
+use App\Application\ExchangeRate\Service\PriceHistoryProvider;
+use App\Application\ExchangeRate\Service\RateFetcher;
 use App\Domain\ExchangeRate\RateRepository;
 use App\Infrastructure\Logging\CorrelationContext;
 use App\Infrastructure\Scheduler\FetchRatesMessage;

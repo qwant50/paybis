@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\Infrastructure\Controller\Api\V1\Rate\Action;
 
-use App\Application\Query\RateQueryService;
+use App\Application\ExchangeRate\Query\RateQueryService;
 use App\Domain\ExchangeRate\CurrencyPair;
 use App\Domain\ExchangeRate\Day;
 use App\Infrastructure\Controller\Api\ApiResponder;

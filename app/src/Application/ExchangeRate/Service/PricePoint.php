@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace App\Application\Service;
+namespace App\Application\ExchangeRate\Service;
 
 /**
  * A single grid-aligned price observation: the price at a point in time.

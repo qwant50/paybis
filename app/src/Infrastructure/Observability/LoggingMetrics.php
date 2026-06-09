@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\Infrastructure\Observability;
 
-use App\Application\Service\Metrics;
+use App\Application\ExchangeRate\Service\Metrics;
 use Psr\Log\LoggerInterface;
 
 /**

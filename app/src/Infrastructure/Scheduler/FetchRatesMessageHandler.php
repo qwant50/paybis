@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\Infrastructure\Scheduler;
 
-use App\Application\Service\RateFetcher;
+use App\Application\ExchangeRate\Service\RateFetcher;
 use App\Infrastructure\Logging\CorrelationContext;
 use Symfony\Component\Messenger\Attribute\AsMessageHandler;
 use Symfony\Component\Uid\Ulid;

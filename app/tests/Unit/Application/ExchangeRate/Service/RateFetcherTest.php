@@ -2,12 +2,12 @@
 
 declare(strict_types=1);
 
-namespace Tests\Unit\Application\Service;
+namespace Tests\Unit\Application\ExchangeRate\Service;
 
-use App\Application\Service\Metrics;
-use App\Application\Service\PriceHistoryProvider;
-use App\Application\Service\PricePoint;
-use App\Application\Service\RateFetcher;
+use App\Application\ExchangeRate\Service\Metrics;
+use App\Application\ExchangeRate\Service\PriceHistoryProvider;
+use App\Application\ExchangeRate\Service\PricePoint;
+use App\Application\ExchangeRate\Service\RateFetcher;
 use App\Domain\ExchangeRate\ExchangeRate;
 use App\Domain\ExchangeRate\RateRepository;
 use Codeception\Test\Unit;

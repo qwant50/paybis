@@ -63,7 +63,7 @@ GET /api/v1/rates/day
 ```
 app/src/
 ├── Domain/ExchangeRate/         # CurrencyPair, Rate, Day, ExchangeRate, RateRepository (pure, no framework)
-├── Application/
+├── Application/ExchangeRate/    # grouped by bounded context (mirrors Domain/)
 │   ├── Service/                 # RateFetcher, PriceHistoryProvider (port), PricePoint, RateFetchReport, Metrics (port)
 │   └── Query/                   # RateQueryService (read side)
 └── Infrastructure/

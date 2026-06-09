@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace App\Application\Service;
+namespace App\Application\ExchangeRate\Service;
 
 /**
  * Port for emitting operational metrics (counters and timings), kept in the

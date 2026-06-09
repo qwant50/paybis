@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Infrastructure\Binance;
 
-use App\Application\Service\PriceHistoryProvider;
-use App\Application\Service\PricePoint;
+use App\Application\ExchangeRate\Service\PriceHistoryProvider;
+use App\Application\ExchangeRate\Service\PricePoint;
 use App\Infrastructure\Binance\RetryingPriceHistoryProvider;
 use Codeception\Test\Unit;
 use Psr\Log\LoggerInterface;

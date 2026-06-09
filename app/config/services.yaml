@@ -81,7 +81,7 @@ services:
         arguments:
             $inner: '@App\Infrastructure\Binance\BinanceService'
 
-    App\Application\Service\PriceHistoryProvider: '@App\Infrastructure\Binance\RetryingPriceHistoryProvider'
+    App\Application\ExchangeRate\Service\PriceHistoryProvider: '@App\Infrastructure\Binance\RetryingPriceHistoryProvider'
 
     # Rate persistence port -> Doctrine adapter.
     App\Domain\ExchangeRate\RateRepository: '@App\Infrastructure\Doctrine\Repository\ExchangeRateRepository'
@@ -91,5 +91,5 @@ services:
         arguments:
             $logger: '@monolog.logger.metrics'
 
-    App\Application\Service\Metrics: '@App\Infrastructure\Observability\LoggingMetrics'
+    App\Application\ExchangeRate\Service\Metrics: '@App\Infrastructure\Observability\LoggingMetrics'
 
