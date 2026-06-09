@@ -5,8 +5,10 @@ EUR→ETH and EUR→LTC** exchange rates from the [Binance Spot API][binance] an
 exposes them as JSON for charting.
 
 - **Periodic ingestion** — every 5 minutes via **Symfony Scheduler** (a Messenger
-  worker), one rate sample per pair, taken from the last *closed* 5-minute Binance
-  candle so each sample sits exactly on the `:00/:05/:10…` UTC grid.
+  worker), one sample per pair per 5-minute slot, taken from each recent Binance
+  candle's *open* price so every sample sits exactly on the `:00/:05/:10…` UTC grid.
+  Each run re-affirms a window of recent candles, so missed runs **backfill** on the
+  next one.
 - **Two read endpoints** — last 24 hours, and a specific day.
 - **OpenAPI docs** — interactive Swagger UI at `/api/doc`.
 
@@ -33,17 +35,22 @@ two representations can never drift apart. The stored price is that EUR-quoted
 value, kept as a fixed-scale `DECIMAL(30,12)` and manipulated through a
 `brick/money`-backed `Rate` value object so no precision is lost.
 
-Each fetch reads the **last closed 5-minute candle** (`klines`, `interval=5m`) and
-stores its close price stamped with the candle's `openTime`. That time is
-authoritative and already on the 5-minute UTC grid, so chart points are evenly
-spaced; re-storing an already-recorded slot is an idempotent no-op (a closed
-candle is immutable history).
+Each fetch reads a window of recent **5-minute candles** (`klines`, `interval=5m`)
+and, for **every** candle in the window — including the still-forming one — stores
+its *open* price stamped with the candle's `openTime`. A candle's open price is
+final the instant the candle opens (it never changes while the candle forms), so
+no "is it closed?" filtering is needed. The `openTime` is authoritative and already
+on the 5-minute UTC grid, so chart points are evenly spaced. Storing a window means
+a scheduler/worker that missed runs **backfills** the gap on its next run; re-storing
+an already-recorded `(pair, slot)` is an idempotent no-op (an open price is immutable
+history).
 
 ```
 Scheduler (every 5 min) ─▶ FetchRatesMessage ─▶ RateFetcher
                                                    │  for each supported pair
                                                    ▼
-                           BinanceService.latestClosedCandle("BTCEUR")
+                           PriceHistoryProvider.recentPricePoints("BTCEUR")
+                                   (Binance adapter; window of recent candles)
                                                    ▼
                                        exchange_rate table (MySQL)
                                                    ▲
@@ -57,10 +64,10 @@ GET /api/v1/rates/day
 app/src/
 ├── Domain/ExchangeRate/         # CurrencyPair, Rate, Day, ExchangeRate, RateRepository (pure, no framework)
 ├── Application/
-│   ├── Service/                 # RateFetcher, ClosedCandleProvider (port), ClosedCandle, RateFetchReport
+│   ├── Service/                 # RateFetcher, PriceHistoryProvider (port), PricePoint, RateFetchReport, Metrics (port)
 │   └── Query/                   # RateQueryService (read side)
 └── Infrastructure/
-    ├── Binance/                 # BinanceService (ClosedCandleProvider adapter)
+    ├── Binance/                 # BinanceService (PriceHistoryProvider adapter), RetryingPriceHistoryProvider (retry decorator)
     ├── Scheduler/               # FetchRatesMessage(+Handler), RatesSchedule (every 5 min)
     ├── Console/                 # app:rates:fetch
     ├── Controller/
