@@ -60,15 +60,36 @@ services:
     Psr\Container\ContainerInterface: '@service_container'
 
     # Binance spot REST client wrapper. Public market-data endpoints need no
-    # credentials, so empty key/secret are fine.
-    App\Infrastructure\Binance\BinanceService:
+    # credentials, so empty key/secret are fine. The configured SDK client is
+    # built by the factory and injected, keeping BinanceService unit-testable.
+    # (SpotRestApiFactory itself is autowired via the App\ resource above.)
+    Binance\Client\Spot\Api\SpotRestApi:
+        factory: ['@App\Infrastructure\Binance\SpotRestApiFactory', 'create']
         arguments:
             $apiKey: '%binance.api_key%'
             $secretKey: '%binance.api_secret%'
             $testnet: false
 
-    App\Application\Service\TickerPriceProvider: '@App\Infrastructure\Binance\BinanceService'
+    App\Infrastructure\Binance\BinanceService:
+        arguments:
+            $spotRestApi: '@Binance\Client\Spot\Api\SpotRestApi'
+
+    # Resilience decorator: retries transient Binance failures with backoff.
+    # $inner must be wired explicitly to the bare adapter, else autowiring would
+    # resolve PriceHistoryProvider to this decorator and wrap itself.
+    App\Infrastructure\Binance\RetryingPriceHistoryProvider:
+        arguments:
+            $inner: '@App\Infrastructure\Binance\BinanceService'
+
+    App\Application\ExchangeRate\Service\PriceHistoryProvider: '@App\Infrastructure\Binance\RetryingPriceHistoryProvider'
 
     # Rate persistence port -> Doctrine adapter.
     App\Domain\ExchangeRate\RateRepository: '@App\Infrastructure\Doctrine\Repository\ExchangeRateRepository'
+
+    # Metrics port -> log-based adapter on the dedicated 'metrics' channel.
+    App\Infrastructure\Observability\LoggingMetrics:
+        arguments:
+            $logger: '@monolog.logger.metrics'
+
+    App\Application\ExchangeRate\Service\Metrics: '@App\Infrastructure\Observability\LoggingMetrics'
 
