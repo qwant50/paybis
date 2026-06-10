@@ -97,6 +97,7 @@ final readonly class RateFeedIntegrityChecker
     /**
      * @return array{list<\DateTimeImmutable>, list<\DateTimeImmutable>} the pair's
      *                                                                   [missing, still-missing-after-repair] slots
+     * @throws \DateMalformedStringException
      */
     private function checkPair(CurrencyPair $pair, \DateTimeImmutable $from, \DateTimeImmutable $to): array
     {
