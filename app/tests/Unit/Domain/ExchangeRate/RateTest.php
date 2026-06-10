@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Domain\ExchangeRate;
 
+use App\Domain\ExchangeRate\Exception\InvalidPriceException;
 use App\Domain\ExchangeRate\Exception\PrecisionLossException;
 use App\Domain\ExchangeRate\Rate;
 use Codeception\Test\Unit;
@@ -26,6 +27,23 @@ final class RateTest extends Unit
         $this->expectException(PrecisionLossException::class);
 
         Rate::fromString('1.2345678901239');
+    }
+
+    public function testItThrowsOnAZeroPrice(): void
+    {
+        // An exchange rate of zero is definitionally invalid — letting one through
+        // would write a corrupt value into immutable history (the idempotent store
+        // never overwrites, so it could not be re-fetched into correctness).
+        $this->expectException(InvalidPriceException::class);
+
+        Rate::fromString('0.00000000');
+    }
+
+    public function testItThrowsOnANegativePrice(): void
+    {
+        $this->expectException(InvalidPriceException::class);
+
+        Rate::fromString('-1.50');
     }
 
     public function testFormatTrimsToDisplayScale(): void

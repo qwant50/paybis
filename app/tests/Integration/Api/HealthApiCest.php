@@ -4,15 +4,18 @@ declare(strict_types=1);
 
 namespace Tests\Integration\Api;
 
+use App\Domain\ExchangeRate\CurrencyPair;
 use App\Infrastructure\Controller\Api\ApiResponder;
 use App\Infrastructure\Doctrine\Entity\ExchangeRateDoctrine;
 use Tests\Support\IntegrationTester;
 
 final class HealthApiCest
 {
-    public function healthyWhenARecentSampleExists(IntegrationTester $I): void
+    public function healthyWhenEveryPairHasARecentSample(IntegrationTester $I): void
     {
-        $I->haveInRepository(new ExchangeRateDoctrine('EUR/BTC', '52878.09000000', new \DateTimeImmutable()));
+        foreach (CurrencyPair::supportedPairs() as $pair) {
+            $I->haveInRepository(new ExchangeRateDoctrine($pair, '52878.09000000', new \DateTimeImmutable()));
+        }
 
         $I->amOnPage('/api/v1/health');
         $I->seeResponseCodeIs(200);
@@ -25,6 +28,19 @@ final class HealthApiCest
         $I->assertNotEmpty($body['data']['lastSampleAt']);
         $I->assertIsInt($body['data']['sampleAgeSeconds']);
         $I->assertLessThan(900, $body['data']['sampleAgeSeconds']);
+    }
+
+    public function unavailableWhenOnlyOnePairIsFresh(IntegrationTester $I): void
+    {
+        // Freshness is per pair: one feeding pair must not mask the dead ones.
+        $I->haveInRepository(new ExchangeRateDoctrine('EUR/BTC', '52878.09000000', new \DateTimeImmutable()));
+
+        $I->amOnPage('/api/v1/health');
+        $I->seeResponseCodeIs(503);
+
+        $body = $this->json($I);
+        $this->assertErrorEnvelope($I, $body);
+        $I->assertSame('SERVICE_UNAVAILABLE', $body['error']['code']);
     }
 
     public function unavailableWhenTheLatestSampleIsStale(IntegrationTester $I): void

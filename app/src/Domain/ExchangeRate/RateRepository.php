@@ -31,8 +31,10 @@ interface RateRepository
     public function findBetween(CurrencyPair $pair, \DateTimeImmutable $from, \DateTimeImmutable $to): array;
 
     /**
-     * The recorded-at time of the most recent sample across all pairs, or null if
-     * no samples are stored yet. Used to gauge how fresh the stored feed is.
+     * The recorded-at time of the pair's most recent sample, or null if none is
+     * stored yet. The fetcher uses it to size its backfill window to the pair's
+     * own trailing gap; the health check uses it to judge each pair's freshness
+     * individually (a cross-pair latest would mask a single dead pair).
      */
-    public function latestRecordedAt(): ?\DateTimeImmutable;
+    public function latestRecordedAt(CurrencyPair $pair): ?\DateTimeImmutable;
 }

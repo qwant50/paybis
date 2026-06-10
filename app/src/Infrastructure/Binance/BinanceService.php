@@ -8,11 +8,13 @@ use App\Application\ExchangeRate\Service\PriceHistoryProvider;
 use App\Application\ExchangeRate\Service\PricePoint;
 use Binance\Client\Spot\Api\SpotRestApi;
 use Binance\Client\Spot\Model\Interval;
+use Binance\Client\Spot\Model\KlinesResponse;
 use Binance\Common\ApiException;
+use Binance\Common\Dtos\ApiResponse;
 
 /**
  * Thin wrapper over the Binance spot REST client, exposing only the market data
- * this application needs: a window of recent grid-aligned price points.
+ * this application needs: grid-aligned price points.
  *
  * Each point is a 5-minute candle's *open* price stamped with its *open time*. A
  * candle's open price is final the moment the candle opens — it never changes, even
@@ -24,13 +26,15 @@ final readonly class BinanceService implements PriceHistoryProvider
 {
     private const Interval INTERVAL = Interval::INTERVAL_5M;
 
+    /** The {@see self::INTERVAL} candle length in milliseconds; used to page time ranges. */
+    private const int INTERVAL_MS = 5 * 60 * 1000;
+
     /**
-     * How many of the most recent candles to fetch each run. This is the backfill
-     * window: re-affirming the last {@see self::BACKFILL_CANDLES} 5-minute slots lets
-     * a run that follows downtime fill the slots it missed (already-stored slots are
-     * idempotent no-ops). 12 candles ≈ 1 hour of recovery.
+     * The most candles Binance returns from a single `klines` request. Both fetch
+     * methods clamp to this; {@see self::pricePointsBetween()} pages across it to
+     * cover wider ranges. (Binance's documented hard cap is 1000.)
      */
-    private const int BACKFILL_CANDLES = 12;
+    private const int MAX_CANDLES = 1000;
 
     public function __construct(
         private SpotRestApi $spotRestApi,
@@ -38,25 +42,103 @@ final readonly class BinanceService implements PriceHistoryProvider
     }
 
     /**
-     * Recent grid-aligned price points for a Binance symbol (e.g. "BTCEUR"),
-     * ascending by time, including the current (still-forming) slot.
-     *
      * @return list<PricePoint>
      *
      * @throws \RuntimeException when the request fails or yields no usable points
      */
-    public function recentPricePoints(string $symbol): array
+    public function recentPricePoints(string $symbol, int $limit): array
+    {
+        $response = $this->klines($symbol, null, null, min($limit, self::MAX_CANDLES));
+
+        $points = $this->toPoints($response);
+
+        if ($points === []) {
+            throw new \RuntimeException(sprintf('Binance returned no usable price points for symbol "%s".', $symbol));
+        }
+
+        return $points;
+    }
+
+    /**
+     * @return list<PricePoint>
+     *
+     * @throws \RuntimeException when a request fails
+     */
+    public function pricePointsBetween(string $symbol, \DateTimeImmutable $from, \DateTimeImmutable $to): array
+    {
+        $startMs = $from->getTimestamp() * 1000;
+        $endMs = $to->getTimestamp() * 1000;
+
+        $points = [];
+        while ($startMs < $endMs) {
+            $page = $this->toPoints($this->klines($symbol, $startMs, $endMs - 1, self::MAX_CANDLES));
+            if ($page === []) {
+                break;
+            }
+
+            foreach ($page as $point) {
+                if ($point->time < $to) {
+                    $points[] = $point;
+                }
+            }
+
+            // Advance past the last candle of this page. The page is ascending, so
+            // its last open time is the newest we've seen; the guard below stops us
+            // if Binance ever fails to advance (avoids an infinite loop).
+            $lastOpenMs = end($page)->time->getTimestamp() * 1000;
+            $nextStartMs = $lastOpenMs + self::INTERVAL_MS;
+            if (count($page) < self::MAX_CANDLES || $nextStartMs <= $startMs) {
+                break;
+            }
+
+            $startMs = $nextStartMs;
+        }
+
+        return $points;
+    }
+
+    /**
+     * HTTP statuses Binance answers with when rate limiting: 429 = request rate
+     * exceeded, 418 = IP auto-banned for ignoring 429s.
+     */
+    private const array RATE_LIMIT_STATUSES = [429, 418];
+
+    /**
+     * @return ApiResponse<KlinesResponse>
+     *
+     * @throws RateLimitException when Binance rate-limits the request
+     * @throws \RuntimeException  when the underlying request fails any other way
+     */
+    private function klines(string $symbol, ?int $startTimeMs, ?int $endTimeMs, int $limit): ApiResponse
     {
         try {
-            $response = $this->spotRestApi->klines($symbol, self::INTERVAL, limit: self::BACKFILL_CANDLES);
+            return $this->spotRestApi->klines($symbol, self::INTERVAL, $startTimeMs, $endTimeMs, null, $limit);
         } catch (ApiException $e) {
+            if (in_array($e->getCode(), self::RATE_LIMIT_STATUSES, true)) {
+                throw new RateLimitException(
+                    sprintf('Binance rate-limited the klines request for "%s" (HTTP %d): %s', $symbol, $e->getCode(), $e->getMessage()),
+                    $e->getCode(),
+                    $e,
+                );
+            }
+
             throw new \RuntimeException(
                 sprintf('Binance klines request for "%s" failed: %s', $symbol, $e->getMessage()),
                 0,
                 $e,
             );
         }
+    }
 
+    /**
+     * Map a klines response to grid-aligned points, skipping malformed rows.
+     *
+     * @param ApiResponse<KlinesResponse> $response
+     *
+     * @return list<PricePoint>
+     */
+    private function toPoints(ApiResponse $response): array
+    {
         // Each candle is a raw row: [0]=openTime(ms), [1]=open, …, [4]=close, …
         $points = [];
         foreach ($response->getData()->getItems() as $candle) {
@@ -76,10 +158,6 @@ final readonly class BinanceService implements PriceHistoryProvider
                 ->setTimezone(new \DateTimeZone('UTC'));
 
             $points[] = new PricePoint($openPrice, $openTime);
-        }
-
-        if ($points === []) {
-            throw new \RuntimeException(sprintf('Binance returned no usable price points for symbol "%s".', $symbol));
         }
 
         return $points;

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\ExchangeRate;
 
+use App\Domain\ExchangeRate\Exception\InvalidPriceException;
 use App\Domain\ExchangeRate\Exception\PrecisionLossException;
 use Brick\Math\Exception\MathException;
 use Brick\Math\Exception\RoundingNecessaryException;
@@ -40,15 +41,27 @@ final readonly class Rate
      * {@see PrecisionLossException} instead, signalling that the storage scale
      * needs widening for that asset.
      *
+     * A non-positive price raises {@see InvalidPriceException}: zero or negative
+     * is definitionally invalid for an exchange rate, and the idempotent store
+     * never overwrites, so a corrupt value let through here would become
+     * permanent history.
+     *
      * @throws PrecisionLossException|MathException when the price has more than self::SCALE decimals
+     * @throws InvalidPriceException when the price is zero or negative
      */
     public static function fromString(string $price): self
     {
         try {
-            return new self(Money::of($price, 'EUR', new CustomContext(self::SCALE), RoundingMode::Unnecessary));
+            $amount = Money::of($price, 'EUR', new CustomContext(self::SCALE), RoundingMode::Unnecessary);
         } catch (RoundingNecessaryException $e) {
             throw PrecisionLossException::forPrice($price, self::SCALE);
         }
+
+        if (!$amount->isPositive()) {
+            throw InvalidPriceException::forNonPositive($price);
+        }
+
+        return new self($amount);
     }
 
     /**

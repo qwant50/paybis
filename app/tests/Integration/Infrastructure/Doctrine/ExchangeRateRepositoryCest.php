@@ -55,4 +55,31 @@ final class ExchangeRateRepositoryCest
         $I->assertTrue($second);
         $I->assertSame(2, $I->grabNumRecords(ExchangeRateDoctrine::class, ['pair' => 'EUR/ETH']));
     }
+
+    /**
+     * The fetcher sizes each pair's backfill window from its own latest slot, and
+     * the health check judges each pair's freshness individually, so
+     * latestRecordedAt is scoped per pair; an unseen pair reports null.
+     */
+    public function latestRecordedAtIsScopedPerPair(IntegrationTester $I): void
+    {
+        $repository = $I->grabService(ExchangeRateRepository::class);
+
+        $btc = CurrencyPair::fromString('EUR/BTC');
+        $eth = CurrencyPair::fromString('EUR/ETH');
+
+        $btcLatest = new \DateTimeImmutable('2026-03-15 12:10:00', new \DateTimeZone('UTC'));
+        $ethLatest = new \DateTimeImmutable('2026-03-15 12:30:00', new \DateTimeZone('UTC'));
+
+        $repository->save(new ExchangeRate($btc, Rate::fromString('52000.00'), new \DateTimeImmutable('2026-03-15 12:05:00', new \DateTimeZone('UTC'))));
+        $repository->save(new ExchangeRate($btc, Rate::fromString('52100.00'), $btcLatest));
+        $repository->save(new ExchangeRate($eth, Rate::fromString('1300.00'), $ethLatest));
+
+        // Per pair: each pair's own most-recent slot.
+        $I->assertEquals($btcLatest, $repository->latestRecordedAt($btc));
+        $I->assertEquals($ethLatest, $repository->latestRecordedAt($eth));
+
+        // An unseen pair has no samples yet.
+        $I->assertNull($repository->latestRecordedAt(CurrencyPair::fromString('EUR/LTC')));
+    }
 }

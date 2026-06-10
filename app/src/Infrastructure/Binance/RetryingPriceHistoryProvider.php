@@ -40,7 +40,29 @@ final readonly class RetryingPriceHistoryProvider implements PriceHistoryProvide
      *
      * @throws \RuntimeException when every attempt fails (the last failure is rethrown)
      */
-    public function recentPricePoints(string $symbol): array
+    public function recentPricePoints(string $symbol, int $limit): array
+    {
+        return $this->withRetries($symbol, fn (): array => $this->inner->recentPricePoints($symbol, $limit));
+    }
+
+    /**
+     * @return list<PricePoint>
+     *
+     * @throws \RuntimeException when every attempt fails (the last failure is rethrown)
+     */
+    public function pricePointsBetween(string $symbol, \DateTimeImmutable $from, \DateTimeImmutable $to): array
+    {
+        return $this->withRetries($symbol, fn (): array => $this->inner->pricePointsBetween($symbol, $from, $to));
+    }
+
+    /**
+     * @param callable(): list<PricePoint> $fetch
+     *
+     * @return list<PricePoint>
+     *
+     * @throws \RuntimeException when every attempt fails (the last failure is rethrown)
+     */
+    private function withRetries(string $symbol, callable $fetch): array
     {
         $attempt = 0;
 
@@ -48,7 +70,18 @@ final readonly class RetryingPriceHistoryProvider implements PriceHistoryProvide
             ++$attempt;
 
             try {
-                return $this->inner->recentPricePoints($symbol);
+                return $fetch();
+            } catch (RateLimitException $e) {
+                // Retrying now would add load exactly when Binance asks for less
+                // (and escalate toward the 418 IP ban). The next scheduled run —
+                // minutes out, far beyond any in-run backoff — is the retry.
+                $this->logger->warning('Binance rate limited; deferring to the next scheduled run instead of retrying.', [
+                    'symbol'    => $symbol,
+                    'attempt'   => $attempt,
+                    'exception' => $e,
+                ]);
+
+                throw $e;
             } catch (\RuntimeException $e) {
                 if ($attempt >= $this->maxAttempts) {
                     throw $e;

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Infrastructure\Controller\Api\V1\Health\Action;
 
+use App\Domain\ExchangeRate\CurrencyPair;
 use App\Domain\ExchangeRate\RateRepository;
 use App\Infrastructure\Controller\Api\ApiResponder;
 use App\Infrastructure\Controller\Api\Response\ApiErrorEnvelope;
@@ -20,9 +21,12 @@ use Symfony\Component\Routing\Attribute\Route;
 /**
  * GET /api/v1/health — readiness probe for the rates feed.
  *
- * Reports 200 only when the database is reachable AND a recent sample exists; any
- * failure (DB unreachable, no samples yet, or stale data) is raised as a 503 so an
- * orchestrator/load balancer can act on the status code. The shared
+ * Reports 200 only when the database is reachable AND every supported pair has a
+ * recent sample; any failure (DB unreachable, a pair with no samples yet, or a
+ * pair gone stale) is raised as a 503 so an orchestrator/load balancer can act on
+ * the status code. Freshness is checked *per pair* — a cross-pair latest would
+ * stay fresh while a single dead pair (delisted symbol, persistent fetch failure)
+ * went unnoticed behind the others. The shared
  * {@see \App\Infrastructure\EventListener\ApiExceptionListener} turns the thrown
  * {@see ServiceUnavailableHttpException} into the standard error envelope; the
  * specific cause is logged here for operators rather than leaked to clients.
@@ -66,33 +70,54 @@ final class HealthAction
     public function __invoke(): JsonResponse
     {
         try {
-            $latest = $this->rates->latestRecordedAt();
+            $latestByPair = [];
+            foreach (CurrencyPair::all() as $pair) {
+                $latestByPair[$pair->value()] = $this->rates->latestRecordedAt($pair);
+            }
         } catch (\Throwable $e) {
             $this->logger->error('Health check failed: database unreachable.', ['exception' => $e]);
 
             throw new ServiceUnavailableHttpException(message: 'Service unavailable.', previous: $e);
         }
 
-        if ($latest === null) {
-            $this->logger->warning('Health check failed: no rate samples stored yet.');
+        $now = $this->clock->now();
+        $oldest = null;
+        foreach ($latestByPair as $pairValue => $latest) {
+            if ($latest === null) {
+                $this->logger->warning('Health check failed: pair has no rate samples stored yet.', [
+                    'pair' => $pairValue,
+                ]);
 
+                throw new ServiceUnavailableHttpException(message: 'Service unavailable.');
+            }
+
+            $ageSeconds = $now->getTimestamp() - $latest->getTimestamp();
+            if ($ageSeconds > self::STALE_AFTER_SECONDS) {
+                $this->logger->warning('Health check failed: pair rate data is stale.', [
+                    'pair'           => $pairValue,
+                    'last_sample_at' => $latest->format(\DateTimeInterface::ATOM),
+                    'age_seconds'    => $ageSeconds,
+                ]);
+
+                throw new ServiceUnavailableHttpException(message: 'Service unavailable.');
+            }
+
+            if ($oldest === null || $latest < $oldest) {
+                $oldest = $latest;
+            }
+        }
+
+        if ($oldest === null) {
+            // Unreachable while CurrencyPair::MAP is non-empty; guards the type.
             throw new ServiceUnavailableHttpException(message: 'Service unavailable.');
         }
 
-        $ageSeconds = $this->clock->now()->getTimestamp() - $latest->getTimestamp();
-        if ($ageSeconds > self::STALE_AFTER_SECONDS) {
-            $this->logger->warning('Health check failed: rate data is stale.', [
-                'last_sample_at' => $latest->format(\DateTimeInterface::ATOM),
-                'age_seconds'    => $ageSeconds,
-            ]);
-
-            throw new ServiceUnavailableHttpException(message: 'Service unavailable.');
-        }
-
+        // The reported sample is the *worst* pair's latest — the figure that
+        // drives staleness, so operators see the closest-to-failing pair.
         return $this->responder->ok(new HealthResponse(
             status: 'healthy',
-            lastSampleAt: $latest->setTimezone(new \DateTimeZone('UTC'))->format(\DateTimeInterface::ATOM),
-            sampleAgeSeconds: $ageSeconds,
+            lastSampleAt: $oldest->setTimezone(new \DateTimeZone('UTC'))->format(\DateTimeInterface::ATOM),
+            sampleAgeSeconds: $now->getTimestamp() - $oldest->getTimestamp(),
         ));
     }
 }

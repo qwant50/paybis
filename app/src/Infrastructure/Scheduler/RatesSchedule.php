@@ -11,7 +11,8 @@ use Symfony\Component\Scheduler\ScheduleProviderInterface;
 use Symfony\Contracts\Cache\CacheInterface;
 
 /**
- * Drives the periodic rate fetch: a {@see FetchRatesMessage} every 5 minutes.
+ * Drives the periodic rate work: a {@see FetchRatesMessage} every 5 minutes and a
+ * {@see CheckFeedIntegrityMessage} every hour.
  *
  * The schedule is stateful (it remembers the last run) so missed ticks while
  * the worker is down are caught up on restart.
@@ -30,6 +31,7 @@ final class RatesSchedule implements ScheduleProviderInterface
         // tick captures the previous closed 5-minute candle.
         return new Schedule()
             ->add(RecurringMessage::every('5 minutes', new FetchRatesMessage()))
+            ->add(RecurringMessage::every('1 hour', new CheckFeedIntegrityMessage()))
             ->stateful($this->cache);
     }
 }

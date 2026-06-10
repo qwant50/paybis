@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Infrastructure\Controller\Api\V1\Health;
 
+use App\Domain\ExchangeRate\CurrencyPair;
 use App\Domain\ExchangeRate\RateRepository;
 use App\Infrastructure\Controller\Api\ApiResponder;
 use App\Infrastructure\Controller\Api\Security\ResponseSigner;
@@ -45,6 +46,39 @@ final class HealthActionTest extends Unit
         $rates = $this->createMock(RateRepository::class);
         $rates->method('latestRecordedAt')->willReturn(
             new \DateTimeImmutable(self::NOW . ' -16 minutes', new \DateTimeZone('UTC')),
+        );
+
+        $this->expectException(ServiceUnavailableHttpException::class);
+
+        $this->action($rates)();
+    }
+
+    public function testItReportsUnavailableWhenASinglePairIsStale(): void
+    {
+        // EUR/LTC died 16 minutes ago while the other pairs keep feeding: the
+        // cross-pair latest is fresh, but per-pair staleness must still fail the
+        // probe — otherwise one dead pair stays invisible behind the others.
+        $rates = $this->createMock(RateRepository::class);
+        $rates->method('latestRecordedAt')->willReturnCallback(
+            static fn (?CurrencyPair $pair): ?\DateTimeImmutable => $pair?->value() === 'EUR/LTC'
+                ? new \DateTimeImmutable(self::NOW . ' -16 minutes', new \DateTimeZone('UTC'))
+                : new \DateTimeImmutable(self::NOW, new \DateTimeZone('UTC')),
+        );
+
+        $this->expectException(ServiceUnavailableHttpException::class);
+
+        $this->action($rates)();
+    }
+
+    public function testItReportsUnavailableWhenASinglePairHasNoSamples(): void
+    {
+        // A pair with no samples at all (e.g. just added to the supported set) must
+        // fail the probe even while every other pair is fresh.
+        $rates = $this->createMock(RateRepository::class);
+        $rates->method('latestRecordedAt')->willReturnCallback(
+            static fn (?CurrencyPair $pair): ?\DateTimeImmutable => $pair?->value() === 'EUR/ETH'
+                ? null
+                : new \DateTimeImmutable(self::NOW, new \DateTimeZone('UTC')),
         );
 
         $this->expectException(ServiceUnavailableHttpException::class);

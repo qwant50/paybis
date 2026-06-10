@@ -69,10 +69,12 @@ class ExchangeRateRepository extends ServiceEntityRepository implements RateRepo
         return array_map($this->mapper->doctrineToDomain(...), $rows);
     }
 
-    public function latestRecordedAt(): ?\DateTimeImmutable
+    public function latestRecordedAt(CurrencyPair $pair): ?\DateTimeImmutable
     {
         /** @var ExchangeRateDoctrine|null $row */
         $row = $this->createQueryBuilder('r')
+            ->andWhere('r.pair = :pair')
+            ->setParameter('pair', $pair->value())
             ->orderBy('r.recordedAt', 'DESC')
             ->setMaxResults(1)
             ->getQuery()
