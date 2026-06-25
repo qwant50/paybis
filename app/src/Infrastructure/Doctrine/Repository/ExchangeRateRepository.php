@@ -13,6 +13,7 @@ use App\Infrastructure\Doctrine\Type\DateTimeImmutableMicrosecondType;
 use Doctrine\Bundle\DoctrineBundle\Repository\ServiceEntityRepository;
 use Doctrine\DBAL\Types\Types;
 use Doctrine\Persistence\ManagerRegistry;
+use Psr\Clock\ClockInterface;
 
 /**
  * Doctrine adapter for the {@see RateRepository} port. Persistence concerns only;
@@ -23,8 +24,11 @@ use Doctrine\Persistence\ManagerRegistry;
  */
 class ExchangeRateRepository extends ServiceEntityRepository implements RateRepository
 {
-    public function __construct(ManagerRegistry $registry, private readonly ExchangeRateMapper $mapper)
-    {
+    public function __construct(
+        ManagerRegistry $registry,
+        private readonly ExchangeRateMapper $mapper,
+        private readonly ClockInterface $clock,
+    ) {
         parent::__construct($registry, ExchangeRateDoctrine::class);
     }
 
@@ -38,7 +42,7 @@ class ExchangeRateRepository extends ServiceEntityRepository implements RateRepo
                 'pair'        => $exchangeRate->pair->value(),
                 'price'       => $exchangeRate->rate->asString(),
                 'recorded_at' => $exchangeRate->recordedAt,
-                'created_at'  => new \DateTimeImmutable(),
+                'created_at'  => $this->clock->now()->setTimezone(new \DateTimeZone('UTC')),
             ],
             [
                 'recorded_at' => Types::DATETIME_IMMUTABLE,

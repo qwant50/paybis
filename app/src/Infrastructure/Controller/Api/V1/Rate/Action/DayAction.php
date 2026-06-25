@@ -13,6 +13,7 @@ use App\Infrastructure\Controller\Api\V1\Rate\Mapper\RateSeriesMapper;
 use App\Infrastructure\Controller\Api\V1\Rate\Response\RateSeriesEnvelope;
 use Nelmio\ApiDocBundle\Attribute\Model;
 use OpenApi\Attributes as OA;
+use Psr\Clock\ClockInterface;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\Routing\Attribute\Route;
 
@@ -29,6 +30,7 @@ final class DayAction
         private readonly RateQueryService $rateQuery,
         private readonly RateSeriesMapper $mapper,
         private readonly ApiResponder $responder,
+        private readonly ClockInterface $clock,
     ) {
     }
 
@@ -80,7 +82,7 @@ final class DayAction
         // A fully-elapsed UTC day is final and can be cached hard; a day still in
         // progress keeps gaining samples, so it gets the same short TTL as last-24h.
         $end = $day->toDateTime()->add(new \DateInterval('P1D'));
-        if ($end <= new \DateTimeImmutable('now', new \DateTimeZone('UTC'))) {
+        if ($end <= $this->clock->now()) {
             $response->setMaxAge(86400);
             $response->setImmutable();
         } else {

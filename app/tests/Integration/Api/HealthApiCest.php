@@ -7,14 +7,35 @@ namespace Tests\Integration\Api;
 use App\Domain\ExchangeRate\CurrencyPair;
 use App\Infrastructure\Controller\Api\ApiResponder;
 use App\Infrastructure\Doctrine\Entity\ExchangeRateDoctrine;
+use Symfony\Component\Clock\Clock;
+use Symfony\Component\Clock\DatePoint;
+use Symfony\Component\Clock\MockClock;
+use Symfony\Component\Clock\NativeClock;
 use Tests\Support\IntegrationTester;
 
 final class HealthApiCest
 {
+    /**
+     * Freeze the clock so the controller's "now" (HealthAction reads
+     * ClockInterface) and the fixture timestamps share one instant, making
+     * staleness exact rather than a wall-clock tolerance. The framework's
+     * autowired clock delegates to whatever Clock::set() installs.
+     */
+    public function _before(IntegrationTester $I): void
+    {
+        Clock::set(new MockClock(new DatePoint('2026-06-15 12:00:00', new \DateTimeZone('UTC'))));
+    }
+
+    public function _after(IntegrationTester $I): void
+    {
+        Clock::set(new NativeClock());
+    }
+
     public function healthyWhenEveryPairHasARecentSample(IntegrationTester $I): void
     {
+        $fiveMinutesAgo = Clock::get()->now()->modify('-5 minutes');
         foreach (CurrencyPair::supportedPairs() as $pair) {
-            $I->haveInRepository(new ExchangeRateDoctrine($pair, '52878.09000000', new \DateTimeImmutable()));
+            $I->haveInRepository(new ExchangeRateDoctrine($pair, '52878.09000000', $fiveMinutesAgo));
         }
 
         $I->amOnPage('/api/v1/health');
@@ -25,15 +46,14 @@ final class HealthApiCest
         $this->assertSignatureMatches($I, $body);
 
         $I->assertSame('healthy', $body['data']['status']);
-        $I->assertNotEmpty($body['data']['lastSampleAt']);
-        $I->assertIsInt($body['data']['sampleAgeSeconds']);
-        $I->assertLessThan(900, $body['data']['sampleAgeSeconds']);
+        $I->assertSame('2026-06-15T11:55:00+00:00', $body['data']['lastSampleAt']);
+        $I->assertSame(300, $body['data']['sampleAgeSeconds']);
     }
 
     public function unavailableWhenOnlyOnePairIsFresh(IntegrationTester $I): void
     {
         // Freshness is per pair: one feeding pair must not mask the dead ones.
-        $I->haveInRepository(new ExchangeRateDoctrine('EUR/BTC', '52878.09000000', new \DateTimeImmutable()));
+        $I->haveInRepository(new ExchangeRateDoctrine('EUR/BTC', '52878.09000000', Clock::get()->now()));
 
         $I->amOnPage('/api/v1/health');
         $I->seeResponseCodeIs(503);
@@ -45,7 +65,13 @@ final class HealthApiCest
 
     public function unavailableWhenTheLatestSampleIsStale(IntegrationTester $I): void
     {
-        $I->haveInRepository(new ExchangeRateDoctrine('EUR/BTC', '52878.09000000', new \DateTimeImmutable('-1 hour')));
+        // Every pair is present, so this exercises the staleness branch (not the
+        // missing-pair one): BTC sits one second past the 900s threshold.
+        $now = Clock::get()->now();
+        foreach (CurrencyPair::supportedPairs() as $pair) {
+            $age = $pair === 'EUR/BTC' ? '-901 seconds' : '-1 minute';
+            $I->haveInRepository(new ExchangeRateDoctrine($pair, '52878.09000000', $now->modify($age)));
+        }
 
         $I->amOnPage('/api/v1/health');
         $I->seeResponseCodeIs(503);

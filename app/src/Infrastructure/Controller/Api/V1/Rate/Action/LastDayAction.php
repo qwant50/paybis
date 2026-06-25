@@ -12,6 +12,7 @@ use App\Infrastructure\Controller\Api\V1\Rate\Mapper\RateSeriesMapper;
 use App\Infrastructure\Controller\Api\V1\Rate\Response\RateSeriesEnvelope;
 use Nelmio\ApiDocBundle\Attribute\Model;
 use OpenApi\Attributes as OA;
+use Psr\Clock\ClockInterface;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\Routing\Attribute\Route;
 
@@ -28,6 +29,7 @@ final class LastDayAction
         private readonly RateQueryService $rateQuery,
         private readonly RateSeriesMapper $mapper,
         private readonly ApiResponder $responder,
+        private readonly ClockInterface $clock,
     ) {
     }
 
@@ -63,7 +65,9 @@ final class LastDayAction
     )]
     public function __invoke(CurrencyPair $pair): JsonResponse
     {
-        $response = $this->responder->ok($this->mapper->toResponse($pair, $this->rateQuery->lastDay($pair)));
+        $response = $this->responder->ok(
+            $this->mapper->toResponse($pair, $this->rateQuery->lastDay($pair, $this->clock->now())),
+        );
 
         // A fresh sample lands every 5 minutes; a short shared TTL spares the API
         // a thundering chart client without ever serving truly stale data.

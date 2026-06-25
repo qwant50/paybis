@@ -6,14 +6,34 @@ namespace Tests\Integration\Api;
 
 use App\Infrastructure\Controller\Api\ApiResponder;
 use App\Infrastructure\Doctrine\Entity\ExchangeRateDoctrine;
+use Symfony\Component\Clock\Clock;
+use Symfony\Component\Clock\DatePoint;
+use Symfony\Component\Clock\MockClock;
+use Symfony\Component\Clock\NativeClock;
 use Tests\Support\IntegrationTester;
 
 final class RateApiCest
 {
+    /**
+     * Freeze the clock so the rolling-24h window (LastDayAction → RateQueryService
+     * read it from ClockInterface) is anchored to the same instant as the
+     * fixtures, making the window edges deterministic instead of wall-clock-bound.
+     */
+    public function _before(IntegrationTester $I): void
+    {
+        Clock::set(new MockClock(new DatePoint('2026-06-15 12:00:00', new \DateTimeZone('UTC'))));
+    }
+
+    public function _after(IntegrationTester $I): void
+    {
+        Clock::set(new NativeClock());
+    }
+
     public function last24hReturnsStoredPoints(IntegrationTester $I): void
     {
-        $I->haveInRepository(new ExchangeRateDoctrine('EUR/BTC', '52878.09000000', new \DateTimeImmutable('-1 hour')));
-        $I->haveInRepository(new ExchangeRateDoctrine('EUR/ETH', '1357.96000000', new \DateTimeImmutable('-1 hour')));
+        $anHourAgo = Clock::get()->now()->modify('-1 hour');
+        $I->haveInRepository(new ExchangeRateDoctrine('EUR/BTC', '52878.09000000', $anHourAgo));
+        $I->haveInRepository(new ExchangeRateDoctrine('EUR/ETH', '1357.96000000', $anHourAgo));
 
         $I->amOnPage('/api/v1/rates/last-24h?pair=EUR/BTC');
         $I->seeResponseCodeIs(200);
@@ -29,7 +49,7 @@ final class RateApiCest
 
     public function last24hExcludesOlderSamples(IntegrationTester $I): void
     {
-        $I->haveInRepository(new ExchangeRateDoctrine('EUR/BTC', '11111.00000000', new \DateTimeImmutable('-2 days')));
+        $I->haveInRepository(new ExchangeRateDoctrine('EUR/BTC', '11111.00000000', Clock::get()->now()->modify('-2 days')));
 
         $I->amOnPage('/api/v1/rates/last-24h?pair=EUR/BTC');
         $I->seeResponseCodeIs(200);
@@ -51,6 +71,26 @@ final class RateApiCest
         $this->assertSuccessEnvelope($I, $body);
         $I->assertCount(1, $body['data']['points']);
         $I->assertSame('36.87', $body['data']['points'][0]['price']);
+    }
+
+    public function elapsedDayIsCachedImmutably(IntegrationTester $I): void
+    {
+        // 2026-03-15 is fully in the past relative to the frozen clock, so the day
+        // is final and gets the long immutable TTL.
+        $I->amOnPage('/api/v1/rates/day?pair=EUR/BTC&date=2026-03-15');
+        $I->seeResponseCodeIs(200);
+
+        $I->assertResponseHeaderSame('Cache-Control', 'immutable, max-age=86400, public');
+    }
+
+    public function inProgressDayIsNotCachedImmutably(IntegrationTester $I): void
+    {
+        // 2026-06-15 is the frozen "today": the day is still gaining samples, so the
+        // DayAction clock guard must give it the short TTL, never immutable.
+        $I->amOnPage('/api/v1/rates/day?pair=EUR/BTC&date=2026-06-15');
+        $I->seeResponseCodeIs(200);
+
+        $I->assertResponseHeaderSame('Cache-Control', 'max-age=60, public');
     }
 
     public function unknownPairReturns400(IntegrationTester $I): void

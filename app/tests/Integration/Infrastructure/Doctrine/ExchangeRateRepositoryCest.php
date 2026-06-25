@@ -9,10 +9,41 @@ use App\Domain\ExchangeRate\ExchangeRate;
 use App\Domain\ExchangeRate\Rate;
 use App\Infrastructure\Doctrine\Entity\ExchangeRateDoctrine;
 use App\Infrastructure\Doctrine\Repository\ExchangeRateRepository;
+use Symfony\Component\Clock\Clock;
+use Symfony\Component\Clock\DatePoint;
+use Symfony\Component\Clock\MockClock;
+use Symfony\Component\Clock\NativeClock;
 use Tests\Support\IntegrationTester;
 
 final class ExchangeRateRepositoryCest
 {
+    public function _before(IntegrationTester $I): void
+    {
+        Clock::set(new MockClock(new DatePoint('2026-06-15 12:00:00.123456', new \DateTimeZone('UTC'))));
+    }
+
+    public function _after(IntegrationTester $I): void
+    {
+        Clock::set(new NativeClock());
+    }
+
+    /**
+     * `created_at` is the audit stamp for *when the row was written*: it must come
+     * from the clock (not a raw wall-clock call) and keep microsecond precision in
+     * its DATETIME(6) column, so the value is both UTC and debuggable.
+     */
+    public function saveStampsCreatedAtFromTheClockWithMicroseconds(IntegrationTester $I): void
+    {
+        $repository = $I->grabService(ExchangeRateRepository::class);
+
+        $pair = CurrencyPair::fromString('EUR/BTC');
+        $slot = new \DateTimeImmutable('2026-03-15 12:05:00', new \DateTimeZone('UTC'));
+        $repository->save(new ExchangeRate($pair, Rate::fromString('52878.09'), $slot));
+
+        $stored = $I->grabEntityFromRepository(ExchangeRateDoctrine::class, ['pair' => 'EUR/BTC']);
+        $I->assertSame('2026-06-15 12:00:00.123456', $stored->getCreatedAt()->format('Y-m-d H:i:s.u'));
+    }
+
     /**
      * A closed candle is immutable history: storing the same (pair, slot) again —
      * e.g. a manual fetch, a worker restart, or a scheduler catch-up — must be a

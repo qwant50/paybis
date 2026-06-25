@@ -48,10 +48,16 @@ class ExchangeRateDoctrine
         $this->recordedAt = $recordedAt;
     }
 
+    /**
+     * The production write path is {@see \App\Infrastructure\Doctrine\Repository\ExchangeRateRepository::save()},
+     * a raw upsert that stamps `created_at` from the clock and never flushes this
+     * entity — so this callback only fires when the entity is persisted via the
+     * EntityManager (e.g. test fixtures), supplying a valid UTC default.
+     */
     #[ORM\PrePersist]
     public function initialiseCreatedAt(): void
     {
-        $this->createdAt = new \DateTimeImmutable();
+        $this->createdAt = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
     }
 
     public function getId(): ?int
