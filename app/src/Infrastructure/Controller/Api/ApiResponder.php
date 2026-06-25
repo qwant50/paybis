@@ -63,8 +63,10 @@ final readonly class ApiResponder
     public function ok(object $data): JsonResponse
     {
         $id = $this->requestId();
+        $version = $this->version();
+        $datetime = $this->now();
 
-        $envelope = ApiEnvelope::success($id, $this->version(), $this->now(), $data, $this->signer->sign($data));
+        $envelope = ApiEnvelope::success($id, $version, $datetime, $data, $this->signer->sign($data, $id, $datetime, $version));
 
         return $this->json($envelope, $id, Response::HTTP_OK);
     }
@@ -76,8 +78,10 @@ final readonly class ApiResponder
     public function error(ApiError $error, int $status, array $headers = []): JsonResponse
     {
         $id = $this->requestId();
+        $version = $this->version();
+        $datetime = $this->now();
 
-        $envelope = ApiEnvelope::failure($id, $this->version(), $this->now(), $error, $this->signer->sign($error));
+        $envelope = ApiEnvelope::failure($id, $version, $datetime, $error, $this->signer->sign($error, $id, $datetime, $version));
 
         return $this->json($envelope, $id, $status, $headers);
     }

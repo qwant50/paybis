@@ -93,7 +93,7 @@ final class HealthActionTest extends Unit
             new MockClock(new \DateTimeImmutable(self::NOW, new \DateTimeZone('UTC'))),
             // A real responder (it is final, so not mockable) — never reached on the
             // failure paths under test, which throw before producing a response.
-            new ApiResponder(new RequestStack(), new CorrelationContext(), new MockClock(), new ResponseSigner('s', 'k'), '1.0.0'),
+            new ApiResponder(new RequestStack(), new CorrelationContext(), new MockClock(), new ResponseSigner('0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', 'k'), '1.0.0'),
             $this->createMock(LoggerInterface::class),
         );
     }

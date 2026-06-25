@@ -92,7 +92,7 @@ final class ApiExceptionListenerTest extends Unit
         $this->assertArrayHasKey('id', $body);
         $this->assertSame(['api' => 'v1', 'release' => '1.0.0'], $body['version']);
         $this->assertSame('2026-06-07T12:34:56+00:00', $body['datetime']);
-        $this->assertSame('HMAC-SHA256', $body['security']['algorithm']);
+        $this->assertSame('Ed25519', $body['security']['algorithm']);
         $this->assertNotSame('', $body['security']['signature']);
     }
 
@@ -115,7 +115,7 @@ final class ApiExceptionListenerTest extends Unit
             $requestStack,
             new CorrelationContext(),
             new MockClock('2026-06-07T12:34:56+00:00'),
-            new ResponseSigner('test_signing_secret', 'test'),
+            new ResponseSigner('0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', 'test'),
             '1.0.0',
         );
 

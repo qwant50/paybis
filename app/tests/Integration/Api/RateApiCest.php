@@ -20,7 +20,7 @@ final class RateApiCest
 
         $body = $this->json($I);
         $this->assertSuccessEnvelope($I, $body);
-        $this->assertSignatureMatches($I, $body['data'], $body['security']['signature']);
+        $this->assertSignatureMatches($I, $body);
 
         $I->assertSame('EUR/BTC', $body['data']['pair']);
         $I->assertCount(1, $body['data']['points']);
@@ -129,7 +129,7 @@ final class RateApiCest
 
     /**
      * Shared envelope invariants: id matches the X-Request-Id header, version,
-     * datetime, and a present HMAC signature.
+     * datetime, and a present Ed25519 signature.
      *
      * @param array<string, mixed> $body
      */
@@ -139,26 +139,36 @@ final class RateApiCest
         $I->assertResponseHeaderSame('X-Request-Id', $body['id']);
         $I->assertSame(['api' => 'v1', 'release' => '1.0.0'], $body['version']);
         $I->assertNotEmpty($body['datetime']);
-        $I->assertSame('HMAC-SHA256', $body['security']['algorithm']);
+        $I->assertSame('Ed25519', $body['security']['algorithm']);
         $I->assertSame('test', $body['security']['keyId']);
         $I->assertNotEmpty($body['security']['signature']);
     }
 
     /**
-     * Recomputes the HMAC over the canonical payload to prove the signature is
-     * verifiable client-side with the shared secret.
+     * Verifies the Ed25519 signature with the public key alone — exactly what a
+     * client does — over the canonical {id, datetime, version, payload} composite,
+     * proving it is verifiable without any shared secret and binds the response's
+     * freshness metadata, not the payload alone.
      *
-     * @param array<string, mixed> $payload
+     * @param array<string, mixed> $body
      */
-    private function assertSignatureMatches(IntegrationTester $I, array $payload, string $signature): void
+    private function assertSignatureMatches(IntegrationTester $I, array $body): void
     {
-        $expected = hash_hmac(
-            'sha256',
-            (string) json_encode($payload, ApiResponder::ENCODING_OPTIONS | JSON_THROW_ON_ERROR),
-            'test_signing_secret',
+        $verified = sodium_crypto_sign_verify_detached(
+            sodium_hex2bin($body['security']['signature']),
+            (string) json_encode(
+                [
+                    'id' => $body['id'],
+                    'datetime' => $body['datetime'],
+                    'version' => $body['version'],
+                    'payload' => $body['data'] ?? $body['error'],
+                ],
+                ApiResponder::ENCODING_OPTIONS | JSON_THROW_ON_ERROR,
+            ),
+            sodium_hex2bin('207a067892821e25d770f1fba0c47c11ff4b813e54162ece9eb839e076231ab6'),
         );
 
-        $I->assertSame($expected, $signature);
+        $I->assertTrue($verified);
     }
 
     /**

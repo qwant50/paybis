@@ -17,7 +17,7 @@ use Symfony\Component\HttpFoundation\RequestStack;
 
 final class ApiResponderTest extends Unit
 {
-    private const string SECRET = 'test_signing_secret';
+    private const string SEED = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 
     public function testOkBuildsASignedSuccessEnvelope(): void
     {
@@ -34,8 +34,8 @@ final class ApiResponderTest extends Unit
         $this->assertSame('EUR/BTC', $body['data']['pair']);
         $this->assertArrayNotHasKey('error', $body);
 
-        $expected = hash_hmac('sha256', (string) json_encode($data, ApiResponder::ENCODING_OPTIONS), self::SECRET);
-        $this->assertSame($expected, $body['security']['signature']);
+        $this->assertSame('Ed25519', $body['security']['algorithm']);
+        $this->assertTrue($this->signatureVerifies($body, $data));
     }
 
     public function testErrorBuildsASignedErrorEnvelope(): void
@@ -51,8 +51,8 @@ final class ApiResponderTest extends Unit
         $this->assertSame('INVALID_PAIR', $body['error']['code']);
         $this->assertArrayNotHasKey('data', $body);
 
-        $expected = hash_hmac('sha256', (string) json_encode($error, ApiResponder::ENCODING_OPTIONS), self::SECRET);
-        $this->assertSame($expected, $body['security']['signature']);
+        $this->assertSame('Ed25519', $body['security']['algorithm']);
+        $this->assertTrue($this->signatureVerifies($body, $error));
     }
 
     public function testItDerivesTheApiVersionFromTheRequestPath(): void
@@ -87,7 +87,7 @@ final class ApiResponderTest extends Unit
             $stack,
             $context,
             new MockClock('2026-06-07T12:34:56+00:00'),
-            new ResponseSigner(self::SECRET, 'test'),
+            new ResponseSigner(self::SEED, 'test'),
             '1.0.0',
         );
     }
@@ -98,5 +98,33 @@ final class ApiResponderTest extends Unit
     private function decode(\Symfony\Component\HttpFoundation\JsonResponse $response): array
     {
         return json_decode((string) $response->getContent(), true, 512, JSON_THROW_ON_ERROR);
+    }
+
+    /**
+     * Verifies the envelope's Ed25519 signature against the public key — the
+     * client's perspective — over the canonical {id, datetime, version, payload}
+     * composite, proving it binds the freshness metadata, not the payload alone.
+     *
+     * @param array<string, mixed> $body
+     */
+    private function signatureVerifies(array $body, object $payload): bool
+    {
+        $publicKey = sodium_crypto_sign_publickey_from_secretkey(
+            sodium_crypto_sign_secretkey(sodium_crypto_sign_seed_keypair(sodium_hex2bin(self::SEED))),
+        );
+
+        return sodium_crypto_sign_verify_detached(
+            sodium_hex2bin($body['security']['signature']),
+            (string) json_encode(
+                [
+                    'id' => $body['id'],
+                    'datetime' => $body['datetime'],
+                    'version' => $body['version'],
+                    'payload' => $payload,
+                ],
+                ApiResponder::ENCODING_OPTIONS | JSON_THROW_ON_ERROR,
+            ),
+            $publicKey,
+        );
     }
 }

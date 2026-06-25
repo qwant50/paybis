@@ -62,7 +62,7 @@ to `/usr/local/etc/php-fpm.d/`), and `symfony/runtime`'s own dotenv loading is t
 off (`extra.runtime.disable_dotenv` in `app/composer.json`). The only variables the
 app consumes are `APP_ENV`, `APP_SECRET`, `APP_DB`, `APP_DB_HOST`, `APP_DB_PORT`,
 `APP_DB_USER`, `APP_DB_PASSWORD`, `BINANCE_API_KEY`, `BINANCE_API_SECRET`,
-`API_SIGNING_SECRET`, `API_SIGNING_KEY_ID` (`APP_DEBUG` is derived from `APP_ENV`).
+`API_SIGNING_PRIVATE_KEY`, `API_SIGNING_KEY_ID` (`APP_DEBUG` is derived from `APP_ENV`).
 
 The host `./app` directory is mounted at `/app/` in the container. Containers/ports:
 
@@ -120,9 +120,10 @@ With no `.env` files, the test-only config lives in two committed places: the te
 database name is derived as `%env(resolve:APP_DB)%_test` in
 `config/packages/test/doctrine.yaml` (so both the suite and `--env=test` migrations
 hit `app_test`, inheriting host/user/password from the environment), and the
-deterministic non-secret signing values (`API_SIGNING_SECRET`, `API_SIGNING_KEY_ID`)
-plus `APP_ENV=test` are set in `tests/bootstrap.php` (wired via `codeception.yml`'s
-`settings.bootstrap`).
+deterministic signing values (a fixed Ed25519 seed in `API_SIGNING_PRIVATE_KEY`,
+plus `API_SIGNING_KEY_ID`) and `APP_ENV=test` are set in `tests/bootstrap.php`
+(wired via `codeception.yml`'s `settings.bootstrap`); the matching public key is
+hard-coded in the signature assertions.
 
 ## Architecture
 
@@ -260,7 +261,10 @@ Symfony Scheduler/Messenger glue both live in Infrastructure (see below).
   and is the single place that stamps the `X-Request-Id` header; `Response/`
   holds the envelope DTOs (`ApiEnvelope`, `ApiError`, `ApiVersion`, `Signature`,
   and the OpenAPI-only `ApiErrorEnvelope`); `Security/ResponseSigner` computes the
-  HMAC-SHA256 integrity signature over the canonical payload JSON.
+  Ed25519 integrity signature over the canonical JSON of the
+  `{id, datetime, version, payload}` composite (private key from
+  `API_SIGNING_PRIVATE_KEY`, a hex 32-byte seed; `publicKeyHex()` exposes the
+  matching verify key).
 - `EventListener/` — `ApiExceptionListener` (`kernel.exception`; the **single
   place** that turns exceptions into the error envelope) and `RequestIdListener`
   (`kernel.request`; mints/validates the per-request correlation id stored as the
@@ -320,11 +324,18 @@ place (`ApiResponder`): `id` (correlation id, mirrored in the `X-Request-Id`
 header), `status` (`success`|`error`), `version` (`{api, release}` — the URL
 contract version from the path + the deployed `app.release`), `datetime` (UTC
 ISO-8601), exactly one of `data` (success) or `error` (`{message, code}`), and
-`security` (`{algorithm, keyId, signature}`). The signature is an HMAC-SHA256
-(`API_SIGNING_SECRET` / `API_SIGNING_KEY_ID`) over the **canonical JSON of the
-payload only** (`data`/`error`, not the metadata), so a client can re-encode that
-sub-object and verify integrity. Resource-specific shaping of `data` belongs in
-that resource's mapper/`Response/` DTO, never in `ApiResponder`.
+`security` (`{algorithm, keyId, signature}`). The signature is an **Ed25519**
+detached signature (private key `API_SIGNING_PRIVATE_KEY`, named by
+`API_SIGNING_KEY_ID`) over the **canonical JSON of the
+`{id, datetime, version, payload}` composite** (`payload` = the `data`/`error`
+sub-object) — binding the payload to the response's correlation id, freshness
+timestamp, and contract version, so a captured response cannot be replayed under a
+forged timestamp. Verification is **asymmetric**: a client reconstructs that same
+composite and verifies with the **public** key (which cannot forge), so the verify
+capability is safe to publish to untrusted consumers. `API_SIGNING_PRIVATE_KEY` is
+a hex-encoded 32-byte Ed25519 seed, validated at `ResponseSigner` construction.
+Resource-specific shaping of `data` belongs in that resource's
+mapper/`Response/` DTO, never in `ApiResponder`.
 
 ### Adding a supported currency pair
 Add the `'EUR/XXX' => ['symbol' => 'XXXEUR', 'tickSize' => '<binance tick size>']`
