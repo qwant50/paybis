@@ -6,6 +6,7 @@
         "ext-ctype": "*",
         "ext-iconv": "*",
         "ext-pcntl": "*",
+        "ext-sodium": "*",
         "binance/binance-connector-php": "v4.0",
         "brick/money": "^0.13.0",
         "composer/package-versions-deprecated": "1.11.99.3",

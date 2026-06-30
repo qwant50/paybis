@@ -30,10 +30,11 @@ COPY ./docker/app/config/php/php.ini /usr/local/etc/php/conf.d/99-custom.ini
 # PHP-FPM pool config: pass the container environment through to workers.
 COPY ./docker/app/config/php/www.conf /usr/local/etc/php-fpm.d/zz-clear-env.conf
 
-# setup supervisor
-RUN mkdir -p /etc/supervisor/conf.d
-COPY ./docker/app/config/supervisor/supervisord.conf /etc/supervisor/supervisord.conf
-COPY ./docker/app/config/supervisor/programs.conf /etc/supervisor/conf.d/
+# setup supervisor (paths mirror Dockerfile.local and the supervisord.conf
+# include glob `/etc/supervisor.d/conf.d/*.conf`, so programs actually load)
+RUN mkdir -p /etc/supervisor.d/conf.d
+COPY ./docker/app/config/supervisor/supervisord.conf /etc/supervisord.conf
+COPY ./docker/app/config/supervisor/programs.conf /etc/supervisor.d/conf.d/
 
 # setup cron
 COPY ./docker/app/config/cron/crontab /tmp/crontab

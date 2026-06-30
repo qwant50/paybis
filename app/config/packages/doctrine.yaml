@@ -10,6 +10,8 @@ doctrine:
     charset: utf8mb4
     logging: false
     profiling: false
+    types:
+      datetime_immutable_microsecond: App\Infrastructure\Doctrine\Type\DateTimeImmutableMicrosecondType
   orm:
     naming_strategy: doctrine.orm.naming_strategy.underscore_number_aware
     auto_mapping: true

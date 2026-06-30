@@ -1,0 +1,221 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Integration\Api;
+
+use App\Infrastructure\Controller\Api\ApiResponder;
+use App\Infrastructure\Doctrine\Entity\ExchangeRateDoctrine;
+use Symfony\Component\Clock\Clock;
+use Symfony\Component\Clock\DatePoint;
+use Symfony\Component\Clock\MockClock;
+use Symfony\Component\Clock\NativeClock;
+use Tests\Support\IntegrationTester;
+
+final class RateApiCest
+{
+    /**
+     * Freeze the clock so the rolling-24h window (LastDayAction → RateQueryService
+     * read it from ClockInterface) is anchored to the same instant as the
+     * fixtures, making the window edges deterministic instead of wall-clock-bound.
+     */
+    public function _before(IntegrationTester $I): void
+    {
+        Clock::set(new MockClock(new DatePoint('2026-06-15 12:00:00', new \DateTimeZone('UTC'))));
+    }
+
+    public function _after(IntegrationTester $I): void
+    {
+        Clock::set(new NativeClock());
+    }
+
+    public function last24hReturnsStoredPoints(IntegrationTester $I): void
+    {
+        $anHourAgo = Clock::get()->now()->modify('-1 hour');
+        $I->haveInRepository(new ExchangeRateDoctrine('EUR/BTC', '52878.09000000', $anHourAgo));
+        $I->haveInRepository(new ExchangeRateDoctrine('EUR/ETH', '1357.96000000', $anHourAgo));
+
+        $I->amOnPage('/api/v1/rates/last-24h?pair=EUR/BTC');
+        $I->seeResponseCodeIs(200);
+
+        $body = $this->json($I);
+        $this->assertSuccessEnvelope($I, $body);
+        $this->assertSignatureMatches($I, $body);
+
+        $I->assertSame('EUR/BTC', $body['data']['pair']);
+        $I->assertCount(1, $body['data']['points']);
+        $I->assertSame('52878.09', $body['data']['points'][0]['price']);
+    }
+
+    public function last24hExcludesOlderSamples(IntegrationTester $I): void
+    {
+        $I->haveInRepository(new ExchangeRateDoctrine('EUR/BTC', '11111.00000000', Clock::get()->now()->modify('-2 days')));
+
+        $I->amOnPage('/api/v1/rates/last-24h?pair=EUR/BTC');
+        $I->seeResponseCodeIs(200);
+
+        $body = $this->json($I);
+        $this->assertSuccessEnvelope($I, $body);
+        $I->assertCount(0, $body['data']['points']);
+    }
+
+    public function dayReturnsOnlyThatDay(IntegrationTester $I): void
+    {
+        $I->haveInRepository(new ExchangeRateDoctrine('EUR/LTC', '36.87000000', new \DateTimeImmutable('2026-03-15 10:00:00', new \DateTimeZone('UTC'))));
+        $I->haveInRepository(new ExchangeRateDoctrine('EUR/LTC', '99.99000000', new \DateTimeImmutable('2026-03-16 10:00:00', new \DateTimeZone('UTC'))));
+
+        $I->amOnPage('/api/v1/rates/day?pair=EUR/LTC&date=2026-03-15');
+        $I->seeResponseCodeIs(200);
+
+        $body = $this->json($I);
+        $this->assertSuccessEnvelope($I, $body);
+        $I->assertCount(1, $body['data']['points']);
+        $I->assertSame('36.87', $body['data']['points'][0]['price']);
+    }
+
+    public function elapsedDayIsCachedImmutably(IntegrationTester $I): void
+    {
+        // 2026-03-15 is fully in the past relative to the frozen clock, so the day
+        // is final and gets the long immutable TTL.
+        $I->amOnPage('/api/v1/rates/day?pair=EUR/BTC&date=2026-03-15');
+        $I->seeResponseCodeIs(200);
+
+        $I->assertResponseHeaderSame('Cache-Control', 'immutable, max-age=86400, public');
+    }
+
+    public function inProgressDayIsNotCachedImmutably(IntegrationTester $I): void
+    {
+        // 2026-06-15 is the frozen "today": the day is still gaining samples, so the
+        // DayAction clock guard must give it the short TTL, never immutable.
+        $I->amOnPage('/api/v1/rates/day?pair=EUR/BTC&date=2026-06-15');
+        $I->seeResponseCodeIs(200);
+
+        $I->assertResponseHeaderSame('Cache-Control', 'max-age=60, public');
+    }
+
+    public function unknownPairReturns400(IntegrationTester $I): void
+    {
+        $I->amOnPage('/api/v1/rates/last-24h?pair=EUR/DOGE');
+        $I->seeResponseCodeIs(400);
+
+        $body = $this->json($I);
+        $this->assertErrorEnvelope($I, $body);
+        $I->assertSame('INVALID_PAIR', $body['error']['code']);
+        $I->assertNotEmpty($body['error']['message']);
+    }
+
+    public function invalidDateReturns400(IntegrationTester $I): void
+    {
+        $I->amOnPage('/api/v1/rates/day?pair=EUR/BTC&date=not-a-date');
+        $I->seeResponseCodeIs(400);
+
+        $body = $this->json($I);
+        $this->assertErrorEnvelope($I, $body);
+        $I->assertSame('INVALID_DATE', $body['error']['code']);
+    }
+
+    public function unknownRouteReturns404(IntegrationTester $I): void
+    {
+        $I->amOnPage('/api/v1/rates/does-not-exist');
+        $I->seeResponseCodeIs(404);
+
+        $body = $this->json($I);
+        $this->assertErrorEnvelope($I, $body);
+        $I->assertSame('NOT_FOUND', $body['error']['code']);
+    }
+
+    public function wrongMethodReturns405(IntegrationTester $I): void
+    {
+        $I->sendAjaxPostRequest('/api/v1/rates/last-24h?pair=EUR/BTC');
+        $I->seeResponseCodeIs(405);
+
+        $body = $this->json($I);
+        $this->assertErrorEnvelope($I, $body);
+        $I->assertSame('METHOD_NOT_ALLOWED', $body['error']['code']);
+    }
+
+    public function emptyResultReturnsEmptyPoints(IntegrationTester $I): void
+    {
+        $I->amOnPage('/api/v1/rates/day?pair=EUR/BTC&date=2000-01-01');
+        $I->seeResponseCodeIs(200);
+
+        $body = $this->json($I);
+        $this->assertSuccessEnvelope($I, $body);
+        $I->assertSame('EUR/BTC', $body['data']['pair']);
+        $I->assertSame([], $body['data']['points']);
+    }
+
+    /**
+     * @param array<string, mixed> $body
+     */
+    private function assertSuccessEnvelope(IntegrationTester $I, array $body): void
+    {
+        $this->assertEnvelopeMeta($I, $body);
+        $I->assertSame('success', $body['status']);
+        $I->assertArrayHasKey('data', $body);
+        $I->assertArrayNotHasKey('error', $body);
+    }
+
+    /**
+     * @param array<string, mixed> $body
+     */
+    private function assertErrorEnvelope(IntegrationTester $I, array $body): void
+    {
+        $this->assertEnvelopeMeta($I, $body);
+        $I->assertSame('error', $body['status']);
+        $I->assertArrayHasKey('error', $body);
+        $I->assertArrayNotHasKey('data', $body);
+    }
+
+    /**
+     * Shared envelope invariants: id matches the X-Request-Id header, version,
+     * datetime, and a present Ed25519 signature.
+     *
+     * @param array<string, mixed> $body
+     */
+    private function assertEnvelopeMeta(IntegrationTester $I, array $body): void
+    {
+        $I->assertNotEmpty($body['id']);
+        $I->assertResponseHeaderSame('X-Request-Id', $body['id']);
+        $I->assertSame(['api' => 'v1', 'release' => '1.0.0'], $body['version']);
+        $I->assertNotEmpty($body['datetime']);
+        $I->assertSame('Ed25519', $body['security']['algorithm']);
+        $I->assertSame('test', $body['security']['keyId']);
+        $I->assertNotEmpty($body['security']['signature']);
+    }
+
+    /**
+     * Verifies the Ed25519 signature with the public key alone — exactly what a
+     * client does — over the canonical {id, datetime, version, payload} composite,
+     * proving it is verifiable without any shared secret and binds the response's
+     * freshness metadata, not the payload alone.
+     *
+     * @param array<string, mixed> $body
+     */
+    private function assertSignatureMatches(IntegrationTester $I, array $body): void
+    {
+        $verified = sodium_crypto_sign_verify_detached(
+            sodium_hex2bin($body['security']['signature']),
+            (string) json_encode(
+                [
+                    'id' => $body['id'],
+                    'datetime' => $body['datetime'],
+                    'version' => $body['version'],
+                    'payload' => $body['data'] ?? $body['error'],
+                ],
+                ApiResponder::ENCODING_OPTIONS | JSON_THROW_ON_ERROR,
+            ),
+            sodium_hex2bin('207a067892821e25d770f1fba0c47c11ff4b813e54162ece9eb839e076231ab6'),
+        );
+
+        $I->assertTrue($verified);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function json(IntegrationTester $I): array
+    {
+        return json_decode($I->grabPageSource(), true, 512, JSON_THROW_ON_ERROR);
+    }
+}

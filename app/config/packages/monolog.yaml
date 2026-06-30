@@ -1,4 +1,5 @@
 monolog:
+  channels: ["metrics"]   # dedicated channel for operational metrics
   handlers:
     app:
       type: rotating_file
@@ -10,6 +11,16 @@ monolog:
       buffer_size: 50 # How many messages should be saved? Prevent memory leaks
       formatter: monolog.formatter.pid_line_formatter
 
+    # Operational metrics as a clean, parseable stream of their own.
+    metrics:
+      type: rotating_file
+      path: "%kernel.logs_dir%/metrics.log"
+      file_permission: '0777'
+      max_files: 7
+      level: info
+      channels: ["metrics"]
+      formatter: monolog.formatter.pid_line_formatter
+
     all:
       type: rotating_file
       path: "%kernel.logs_dir%/all.log"
@@ -18,7 +29,7 @@ monolog:
       level: debug
       buffer_size: 50 # How many messages should be saved? Prevent memory leaks
       formatter: monolog.formatter.pid_line_formatter
-      channels: [ "!doctrine" ]     # <─ exclude SQL logs
+      channels: [ "!doctrine", "!metrics" ]     # <─ exclude SQL logs + the dedicated metrics stream
 
     error:
       type: rotating_file
@@ -32,7 +43,7 @@ monolog:
     console:
       type: console
       process_psr_3_messages: true
-      channels: ["!event", "!doctrine"]
+      channels: ["!event", "!doctrine", "!metrics"]
       verbosity_levels:
         VERBOSITY_NORMAL: INFO
         VERBOSITY_VERBOSE: DEBUG

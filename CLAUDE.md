@@ -9,6 +9,21 @@ EUR→ETH, EUR→LTC** prices from the Binance Spot API every 5 minutes (Symfony
 Scheduler → Messenger worker), stores one sample per pair, and exposes them as
 JSON for charting (last 24h, and a specific UTC day) with OpenAPI/Swagger docs.
 
+Prices come from Binance **5-minute klines**: each fetch stores every recent
+candle's *open* price, stamped with the candle's `openTime`, so every sample lands
+exactly on the 5-minute UTC grid (`:00/:05/:10…`). A candle's open price is final
+the instant the candle opens (even while it's still forming), so no "is it closed?"
+filtering is needed. Each run re-affirms a window of recent candles **sized per
+pair to its own trailing gap** (from that pair's latest stored slot): in steady
+state it re-affirms the last ~1h, and after downtime the window widens to cover the
+gap; a gap beyond Binance's 1000-candle (~3.5 day) per-request cap switches to the
+paging range fetch and still closes in that same run — so a scheduler/worker that
+missed runs **backfills** automatically on its next run, however long the outage.
+Storing the same `(pair, slot)` again is an idempotent no-op — an open price is
+immutable history. For specific interior holes,
+`bin/console app:rates:backfill --from --to [--pair]` repairs an arbitrary UTC
+range on demand.
+
 PHP 8.4 / Symfony 8 (resolves to 8.1). MySQL 8, Doctrine ORM 3 / DBAL 4. Runs in
 Docker behind nginx → PHP-FPM. Prices are kept loss-free as `DECIMAL(30,12)` via
 `brick/money`.
@@ -47,7 +62,7 @@ to `/usr/local/etc/php-fpm.d/`), and `symfony/runtime`'s own dotenv loading is t
 off (`extra.runtime.disable_dotenv` in `app/composer.json`). The only variables the
 app consumes are `APP_ENV`, `APP_SECRET`, `APP_DB`, `APP_DB_HOST`, `APP_DB_PORT`,
 `APP_DB_USER`, `APP_DB_PASSWORD`, `BINANCE_API_KEY`, `BINANCE_API_SECRET`,
-`API_SIGNING_SECRET`, `API_SIGNING_KEY_ID` (`APP_DEBUG` is derived from `APP_ENV`).
+`API_SIGNING_PRIVATE_KEY`, `API_SIGNING_KEY_ID` (`APP_DEBUG` is derived from `APP_ENV`).
 
 The host `./app` directory is mounted at `/app/` in the container. Containers/ports:
 
@@ -89,6 +104,8 @@ composer update-db-test    # run migrations on the test DB
 composer migration-diff    # generate a migration from entity changes
 
 bin/console app:rates:fetch   # fetch all pairs once (manual run / smoke test)
+bin/console app:rates:backfill --from=2026-06-08 --to=2026-06-09 [--pair=EUR/BTC]  # repair a UTC range
+bin/console app:rates:verify  # check the trailing 24h for missing slots; repair any holes
 bin/console debug:scheduler   # inspect the recurring schedule
 ```
 
@@ -103,9 +120,10 @@ With no `.env` files, the test-only config lives in two committed places: the te
 database name is derived as `%env(resolve:APP_DB)%_test` in
 `config/packages/test/doctrine.yaml` (so both the suite and `--env=test` migrations
 hit `app_test`, inheriting host/user/password from the environment), and the
-deterministic non-secret signing values (`API_SIGNING_SECRET`, `API_SIGNING_KEY_ID`)
-plus `APP_ENV=test` are set in `tests/bootstrap.php` (wired via `codeception.yml`'s
-`settings.bootstrap`).
+deterministic signing values (a fixed Ed25519 seed in `API_SIGNING_PRIVATE_KEY`,
+plus `API_SIGNING_KEY_ID`) and `APP_ENV=test` are set in `tests/bootstrap.php`
+(wired via `codeception.yml`'s `settings.bootstrap`); the matching public key is
+hard-coded in the signature assertions.
 
 ## Architecture
 
@@ -121,41 +139,110 @@ Strict layered DDD under `app/src/`:
   a Binance price string, exposes `asString()` for `DECIMAL` storage, `toFloat()`,
   and `format(int $scale)` for rendering at a pair's display precision. Parsing
   raises `PrecisionLossException` if a price has more than 12 decimals (never
-  truncates silently).
+  truncates silently) and `InvalidPriceException` if it is zero or negative —
+  the store never overwrites, so a corrupt value let through would become
+  permanent history.
 - `Day` — immutable VO; strict `YYYY-MM-DD` (UTC midnight) parsing.
 - `ExchangeRate` — immutable domain model composing `CurrencyPair` + `Rate` +
   UTC `recordedAt`. The type the Application layer reads and writes, so it never
   touches the Doctrine entity (`ExchangeRateDoctrine`). Carries no DB identity
   (a persistence concern).
 - `RateRepository` (interface) — persistence **port**, expressed purely in domain
-  types (`save(ExchangeRate)`, `findBetween(): list<ExchangeRate>`). The Doctrine
-  repository is its adapter; keeping the port here lets Application depend only
-  inward. Depend on the interface. (Named `RateRepository`, not
-  `ExchangeRateRepository`, to stay distinct from the Doctrine adapter class.)
+  types (`save(ExchangeRate)`, `findBetween(): list<ExchangeRate>`,
+  `latestRecordedAt(CurrencyPair)`). The Doctrine repository is its adapter;
+  keeping the port here lets Application depend only inward. Depend on the
+  interface. (Named `RateRepository`, not `ExchangeRateRepository`, to stay distinct
+  from the Doctrine adapter class.) `latestRecordedAt($pair)` returns that pair's
+  latest slot: `RateFetcher` sizes its backfill window with it, and the health
+  check judges freshness **per pair** (a cross-pair latest would let one dead pair
+  hide behind the others).
 - `Exception/InvalidPairException`, `Exception/InvalidDateException` — domain input
   errors (extend `\InvalidArgumentException`); their messages are client-safe.
 
-### Application — `Application/`
-- `Service/TickerPriceProvider` (interface) — port abstracting market-data access;
-  its Binance adapter lives in Infrastructure. Depend on the interface.
-- `Service/RateFetcher` — fetches every supported pair, persists one `ExchangeRate`
-  each via `RateRepository`, **isolates per-pair failures** (logs, continues),
-  returns a `RateFetchReport`.
-- `Query/RateQueryService` — read side over `RateRepository`: `lastDay()` (rolling
+### Application — `Application/ExchangeRate/`
+The Application layer is **grouped by bounded context** (mirroring `Domain/`), so
+each context's use cases live under `Application/<Context>/`. Today there is one
+context, `ExchangeRate`, with read/write sides split into `Query/` and `Service/`.
+- `ExchangeRate/Service/PriceHistoryProvider` (interface) — port abstracting market-data access;
+  returns a `list<PricePoint>` (each = open price + grid-aligned open time) for a
+  symbol, via `recentPricePoints($symbol, $limit)` (the up-to-`$limit` most-recent
+  points) and `pricePointsBetween($symbol, $from, $to)` (every point in a UTC range,
+  paged). Its Binance adapter lives in Infrastructure. Depend on the interface.
+- `ExchangeRate/Service/RateFetcher` — fetches a window of recent `PricePoint`s for every
+  supported pair (window **sized per pair to its trailing gap** via an injected
+  `Psr\Clock\ClockInterface` + `latestRecordedAt($pair)`, clamped to
+  `[MIN_CANDLES=12, MAX_CANDLES=1000]`; a gap beyond the cap is logged + metered
+  and closed **in the same run** via the paging `pricePointsBetween()` — fetching
+  only the most-recent window would strand an interior hole no later run, whose
+  own gap is small again, would ever revisit), and persists each point via `PricePointPersister`
+  **stamped with the point's open time** (not the local clock). Storing the window
+  backfills slots missed during downtime (idempotent `save()` skips ones already
+  stored). **Isolates failures on two levels** — a failing pair's fetch and a single
+  bad point each log and continue. Returns a `RateFetchReport` (`stored`, `skipped`,
+  `failed`).
+- `ExchangeRate/Service/RateBackfiller` — repairs an explicit UTC range `[$from, $to)`
+  for one or all pairs via `pricePointsBetween()`, reusing `PricePointPersister` and
+  the same two-level failure isolation. Anchored to a caller-given window (not
+  "now"), so it fills arbitrary historical gaps and interior holes; idempotent
+  `save()` makes re-runs safe. Driven by `app:rates:backfill` (Infrastructure).
+- `ExchangeRate/Service/PricePointPersister` — the **single place** that turns a pair's
+  `PricePoint`s into stored `ExchangeRate`s (parse `Rate`, idempotent `save`, count
+  `stored`/`skipped`/`failed`, isolate & log per-point failures). An implausibly
+  large jump between adjacent points (>20% per 5-minute slot) is **stored anyway**
+  — flash moves are exchange truth — but metered (`rate_anomaly.price_jump`) and
+  logged for investigation. Shared by `RateFetcher` (scheduled window) and
+  `RateBackfiller` (manual range) so the persist behaviour lives in one place.
+- `ExchangeRate/Service/RateFeedIntegrityChecker` — hourly detect-and-repair: grid-diffs
+  each pair's stored slots over the trailing 24h (anchored at stored slots, so only
+  interior holes count; trailing freshness stays the health check's job), repairs
+  holes via `RateBackfiller`, re-checks, and meters what remains
+  (`rate_integrity.missing_slots` / `.unrepaired_slots`). Returns a
+  `FeedIntegrityReport` (`checkedPairs`, `failedPairs`, `missingSlots`,
+  `repairedSlots`, `unrepairedSlots`). Slots the upstream cannot supply re-flag
+  hourly until they age out of the 24h window; holes older than 24h remain
+  `app:rates:backfill` territory.
+- `ExchangeRate/Query/RateQueryService` — read side over `RateRepository`: `lastDay()` (rolling
   24h) and `forDay()` (a UTC calendar day `[00:00, next 00:00)`), each returning
   `list<ExchangeRate>`. All windows are UTC.
 
 The Application layer holds no framework/SDK imports: the Binance adapter and the
 Symfony Scheduler/Messenger glue both live in Infrastructure (see below).
 
+> **Future direction — delivery layer.** All adapters, *driving* (HTTP controllers,
+> Console, Scheduler) and *driven* (Doctrine, Binance), currently live under
+> `Infrastructure/` — orthodox Ports & Adapters. If a dedicated delivery layer
+> (`Presentation`/`UserInterface`) is later extracted, it must move **all** inbound
+> adapters together (HTTP **and** Console **and** Scheduler), not HTTP alone — a
+> partial split would make the layering inconsistent. Defer it until a second
+> context, API version, or delivery mechanism actually arrives.
+
 ### Infrastructure — `Infrastructure/`
-- `Binance/BinanceService` — the `TickerPriceProvider` adapter; a thin wrapper
+- `Binance/BinanceService` — the `PriceHistoryProvider` adapter; a thin wrapper
   over the Binance spot REST client (the only place the Binance SDK is imported).
-- `Scheduler/` — `RatesSchedule` (`#[AsSchedule('rates')]`, stateful, every 5 min)
-  dispatches `FetchRatesMessage`, handled by `FetchRatesMessageHandler` →
-  `RateFetcher`. The framework's scheduling/messaging entry points live here so
-  the Application layer stays framework-free.
+  `recentPricePoints()` fetches the caller's `$limit` most-recent `klines` (clamped
+  to `MAX_CANDLES = 1000`, Binance's per-request cap) and `pricePointsBetween()`
+  pages `klines` by `startTime`/`endTime` across a UTC range; both run at
+  `Interval::INTERVAL_5M` and map **every** row — including the still-forming one —
+  to a `PricePoint` (its **open price** + on-grid `openTime`). The interval here
+  must match the scheduler cadence. A rate-limit response (HTTP 429, or 418 once
+  the IP is auto-banned) raises the distinct `RateLimitException`, which the
+  `RetryingPriceHistoryProvider` decorator (3 attempts, exponential backoff for
+  transient errors) deliberately does **not** retry — fast retries add load
+  exactly when Binance asks for less; the next scheduled run is the retry.
+- `Scheduler/` — `RatesSchedule` (`#[AsSchedule('rates')]`, stateful) dispatches
+  two messages on the same worker: `FetchRatesMessage` (every 5 min →
+  `FetchRatesMessageHandler` → `RateFetcher`) and `CheckFeedIntegrityMessage`
+  (hourly → `CheckFeedIntegrityMessageHandler` → `RateFeedIntegrityChecker`). The
+  framework's scheduling/messaging entry points live here so the Application layer
+  stays framework-free.
 - `Console/FetchRatesCommand` — `app:rates:fetch` (entry point only).
+- `Console/BackfillRatesCommand` — `app:rates:backfill --from --to [--pair]` (entry
+  point only); parses the UTC range via the `Day` VO / `CurrencyPair` and delegates
+  to `RateBackfiller`. For manual recovery of gaps wider than the scheduled run's
+  automatic window, or specific interior holes.
+- `Console/VerifyRatesCommand` — `app:rates:verify` (entry point only); runs the feed
+  integrity check (trailing 24h) on demand and exits non-zero when a pair failed or
+  a hole could not be repaired.
 - `Controller/Api/V1/Rate/` — one resource folder, split by type:
   `Action/` (single-action controllers `LastDayAction` →
   `GET /api/v1/rates/last-24h`, `DayAction` → `GET /api/v1/rates/day`),
@@ -174,7 +261,10 @@ Symfony Scheduler/Messenger glue both live in Infrastructure (see below).
   and is the single place that stamps the `X-Request-Id` header; `Response/`
   holds the envelope DTOs (`ApiEnvelope`, `ApiError`, `ApiVersion`, `Signature`,
   and the OpenAPI-only `ApiErrorEnvelope`); `Security/ResponseSigner` computes the
-  HMAC-SHA256 integrity signature over the canonical payload JSON.
+  Ed25519 integrity signature over the canonical JSON of the
+  `{id, datetime, version, payload}` composite (private key from
+  `API_SIGNING_PRIVATE_KEY`, a hex 32-byte seed; `publicKeyHex()` exposes the
+  matching verify key).
 - `EventListener/` — `ApiExceptionListener` (`kernel.exception`; the **single
   place** that turns exceptions into the error envelope) and `RequestIdListener`
   (`kernel.request`; mints/validates the per-request correlation id stored as the
@@ -185,7 +275,10 @@ Symfony Scheduler/Messenger glue both live in Infrastructure (see below).
   (the **single place** that maps `ExchangeRateDoctrine` entity ↔ domain
   `ExchangeRate`, via `domainToDoctrine()` / `doctrineToDomain()`), and
   `Migrations/`. `ExchangeRateRepository.findBetween()` returns chronological
-  domain samples.
+  domain samples; `save()` is **idempotent per `(pair, recorded_at)` slot** —
+  an already-stored slot is skipped, never overwritten (backstopped by the
+  `UNIQUE (pair, recorded_at)` index), and **returns `bool`** (`true` = inserted,
+  `false` = skipped) so the fetcher can report newly-backfilled slots.
 
 ## Key Patterns
 
@@ -231,11 +324,18 @@ place (`ApiResponder`): `id` (correlation id, mirrored in the `X-Request-Id`
 header), `status` (`success`|`error`), `version` (`{api, release}` — the URL
 contract version from the path + the deployed `app.release`), `datetime` (UTC
 ISO-8601), exactly one of `data` (success) or `error` (`{message, code}`), and
-`security` (`{algorithm, keyId, signature}`). The signature is an HMAC-SHA256
-(`API_SIGNING_SECRET` / `API_SIGNING_KEY_ID`) over the **canonical JSON of the
-payload only** (`data`/`error`, not the metadata), so a client can re-encode that
-sub-object and verify integrity. Resource-specific shaping of `data` belongs in
-that resource's mapper/`Response/` DTO, never in `ApiResponder`.
+`security` (`{algorithm, keyId, signature}`). The signature is an **Ed25519**
+detached signature (private key `API_SIGNING_PRIVATE_KEY`, named by
+`API_SIGNING_KEY_ID`) over the **canonical JSON of the
+`{id, datetime, version, payload}` composite** (`payload` = the `data`/`error`
+sub-object) — binding the payload to the response's correlation id, freshness
+timestamp, and contract version, so a captured response cannot be replayed under a
+forged timestamp. Verification is **asymmetric**: a client reconstructs that same
+composite and verifies with the **public** key (which cannot forge), so the verify
+capability is safe to publish to untrusted consumers. `API_SIGNING_PRIVATE_KEY` is
+a hex-encoded 32-byte Ed25519 seed, validated at `ResponseSigner` construction.
+Resource-specific shaping of `data` belongs in that resource's
+mapper/`Response/` DTO, never in `ApiResponder`.
 
 ### Adding a supported currency pair
 Add the `'EUR/XXX' => ['symbol' => 'XXXEUR', 'tickSize' => '<binance tick size>']`
@@ -259,13 +359,10 @@ Never use floats for prices. The single `scale` is deliberately split into three
 
 ## Doctrine / DB notes (ORM 3 / DBAL 4)
 
-- Single entity `ExchangeRateDoctrine` (attribute mapping). Repository extends
-  `ServiceEntityRepository`.
 - `config/packages/doctrine.yaml`: `server_version: '8.0.0'` (must be `>= 8.0.0`
   for DBAL 4's platform check — `'8.0'` selects the legacy platform and warns).
-- doctrine-bundle 3 removed `use_savepoints`, `auto_generate_proxy_classes`,
-  `report_fields_where_declared`; prod cache uses native PSR-6 pools
-  (`type: pool`), not the old `DoctrineProvider` bridge.
+- Prod ORM caches (metadata/query/result) use native PSR-6 pools
+  (`type: pool`, `config/packages/prod/doctrine.yaml`).
 
 ## Runtime (Supervisor in `paybis-app`)
 
@@ -281,5 +378,5 @@ Supervisor program reports `RUNNING`; if any program drops to a non-RUNNING stat
 - PSR-4: `App\` → `src/`, `Tests\` → `tests/`. PSR-12 (`composer cs-fix`).
 - Prefer immutable `final readonly` value objects and constructor injection.
 - Time is **UTC** everywhere (storage, queries, parsing).
-- Unit tests mock collaborators via `$this->createMock(...)` (e.g. `TickerPriceProvider`,
+- Unit tests mock collaborators via `$this->createMock(...)` (e.g. `PriceHistoryProvider`,
   `LoggerInterface`); integration tests use `haveInRepository(...)`.
